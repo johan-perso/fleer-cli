@@ -2,7 +2,7 @@
 	"private": true,
 	"name": "fleer-cli",
 	"version": "0.0.1",
-	"description": "Share files from one device to another using the command line, powered by Fleer for cross-platform sharing.",
+	"description": "Share files from one device to another using the command line. Powered by Fleer for cross-platform sharing.",
 	"main": "index.js",
 	"bin": {
 		"fleer": "index.js"

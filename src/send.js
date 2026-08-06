@@ -228,8 +228,9 @@ export default async function () {
 // 	return prompt.run()
 // }
 async function _askIgnoreFile(filePath) {
+	const firstLineMsg = `"${filePath}" is a commonly ignored folder`
 	const prompt = new enquirer.Select({
-		message: `"${filePath}" is a commonly ignored folder.\n  Do you want to send it?`,
+		message: `${reduceString.maxLines(firstLineMsg, 1, 2)}\n  Do you want to send it?`,
 		initial: true,
 		prefix: chalk.cyan("?"),
 		choices: [
