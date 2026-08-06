@@ -1,0 +1,31 @@
+{
+	"private": true,
+	"name": "fleer-cli",
+	"version": "0.0.1",
+	"description": "Share files from one device to another using the command line, powered by Fleer for cross-platform sharing.",
+	"main": "index.js",
+	"bin": {
+		"fleer": "index.js"
+	},
+	"keywords": [
+		"cli",
+		"file",
+		"fleer",
+		"terminal"
+	],
+	"author": "JohanStickman",
+	"license": "MIT",
+	"dependencies": {
+		"chalk": "6.0.0",
+		"enquirer": "2.4.1",
+		"ora": "9.4.1",
+		"update-notifier": "7.3.1"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/johan-perso/fleer-cli.git"
+	},
+	"devDependencies": {
+		"eslint": "9.20.1"
+	}
+}

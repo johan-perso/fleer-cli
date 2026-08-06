@@ -1,0 +1,23 @@
+export default [
+	"node_modules",
+	".pnpm-store",
+	".dart_tool",
+	".DS_Store",
+	".Spotlight-V100",
+	".DocumentRevisions-V100",
+	".TemporaryItems",
+	".trash",
+	".trashes",
+	".VolumeIcon.icns",
+	".fseventsd",
+	"cache",
+	"caches",
+	"tmp",
+	".sock",
+	".lock",
+	".cache",
+	".pub-cache",
+	"code cache",
+	"cacheddata",
+	"logs"
+]
