@@ -13,7 +13,6 @@ const supportedProtocolVersions = [1]
 const maxErrorsCount = 20
 
 const intlFormatter = new Intl.NumberFormat()
-// TODO: check files and not only folders
 const ignoredPaths = []
 var autoIgnoreDoubleCheckPaths = false
 var disableAskingDoubleCheckPaths = false
@@ -102,44 +101,44 @@ export default async function () {
 				continue
 			}
 
-			if (stats.isDirectory()) {
-				// Check for ignored paths if disableAskingDoubleCheckPaths != true
-				if(!disableAskingDoubleCheckPaths) {
-					const isDoubleCheckPath = doubleCheckPaths.some(doubleCheckPath => path.basename(filePath).toLowerCase() === doubleCheckPath.toLowerCase())
-					if (isDoubleCheckPath) { // found a folder that is commonly ignored
-						// Ask user if they want to ignore this folder or not
-						var confirmation
-						if(!autoIgnoreDoubleCheckPaths) {
-							spinner.stop()
+			// Check for ignored paths if disableAskingDoubleCheckPaths != true
+			if(!disableAskingDoubleCheckPaths) {
+				const isDoubleCheckPath = doubleCheckPaths.some(doubleCheckPath => path.basename(filePath).toLowerCase() === doubleCheckPath.toLowerCase())
+				if (isDoubleCheckPath) { // found a folder that is commonly ignored
+					// Ask user if they want to ignore this folder or not
+					var confirmation
+					if(!autoIgnoreDoubleCheckPaths) {
+						spinner.stop()
 
-							confirmation = await _askIgnoreFile(filePath)
-							if(confirmation === "ignoreAll") autoIgnoreDoubleCheckPaths = true
-							if(confirmation === "sendAll") disableAskingDoubleCheckPaths = true
+						confirmation = await _askIgnoreFile(filePath, stats.isDirectory())
+						if(confirmation === "ignoreAll") autoIgnoreDoubleCheckPaths = true
+						if(confirmation === "sendAll") disableAskingDoubleCheckPaths = true
 
-							// Delete the two last line of console
-							process.stdout.moveCursor(0, -1)
-							process.stdout.clearLine(1)
-							process.stdout.moveCursor(0, -1)
-							process.stdout.clearLine(1)
-							spinner.start()
-						} else { // auto ignore all double check paths
-							confirmation = "ignoreAll"
+						// Delete the two last line of console
+						process.stdout.moveCursor(0, -1)
+						process.stdout.clearLine(1)
+						process.stdout.moveCursor(0, -1)
+						process.stdout.clearLine(1)
+						spinner.start()
+					} else { // auto ignore all double check paths
+						confirmation = "ignoreAll"
+					}
+
+					// User wants to ignore this item, so we remove it
+					if (autoIgnoreDoubleCheckPaths || confirmation == "ignore" || confirmation == "ignoreAll") {
+						for (let i = filesPath.length - 1; i >= 0; i--) {
+							const lowerCasedFilePath = filePath.toLowerCase()
+							const lowerCasedCurrentFilePath = filesPath[i].toLowerCase()
+							if (lowerCasedCurrentFilePath === lowerCasedFilePath || lowerCasedCurrentFilePath.startsWith(lowerCasedFilePath)) filesPath.splice(i, 1)
 						}
 
-						// User wants to ignore this folder, so we remove it
-						if (autoIgnoreDoubleCheckPaths || confirmation == "ignore" || confirmation == "ignoreAll") {
-							for (let i = filesPath.length - 1; i >= 0; i--) {
-								const lowerCasedFilePath = filePath.toLowerCase()
-								const lowerCasedCurrentFilePath = filesPath[i].toLowerCase()
-								if (lowerCasedCurrentFilePath === lowerCasedFilePath || lowerCasedCurrentFilePath.startsWith(lowerCasedFilePath)) filesPath.splice(i, 1)
-							}
-
-							ignoredPaths.push(filePath)
-							continue
-						}
+						ignoredPaths.push(filePath)
+						continue
 					}
 				}
+			}
 
+			if (stats.isDirectory()) {
 				// Read files in the directory and add them to the list of files to send
 				const filesInDirectory = await readdir(filePath)
 				for (const fileInDirectory of filesInDirectory) {
@@ -227,25 +226,24 @@ export default async function () {
 
 // 	return prompt.run()
 // }
-async function _askIgnoreFile(filePath) {
-	const firstLineMsg = `"${filePath}" is a commonly ignored folder`
+async function _askIgnoreFile(filePath, isFolder = false) {
+	const firstLineMsg = `"${filePath}" is a commonly ignored ${isFolder ? "folder" : "file"}.`
 	const prompt = new enquirer.Select({
 		message: `${reduceString.maxLines(firstLineMsg, 1, 2)}\n  Do you want to send it?`,
 		initial: true,
 		prefix: chalk.cyan("?"),
 		choices: [
-			{ message: "Yes - Send this folder", value: "send" },
-			{ message: "No - Ignore this folder", value: "ignore" },
+			{ message: `Yes - Send this ${isFolder ? "folder" : "file"}`, value: "send" },
+			{ message: `No - Ignore this ${isFolder ? "folder" : "file"}`, value: "ignore" },
 			{ role: "separator" },
-			{ message: "Yes - Send all folders that are found", value: "sendAll" },
-			{ message: "No - Ignore all similar folders", value: "ignoreAll" },
+			{ message: `Yes - Send all ${isFolder ? "folder" : "file"}s that are found`, value: "sendAll" },
+			{ message: `No - Ignore all similar ${isFolder ? "folder" : "file"}s`, value: "ignoreAll" },
 		]
 	})
 
 	var answer
 	try {
 		answer = await prompt.run()
-
 	} catch (error) {}
 	return answer
 }
