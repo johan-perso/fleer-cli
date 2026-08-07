@@ -192,9 +192,10 @@ export default async function () {
 	}
 
 	if(skippedSymlinksCount >= 1) console.log(`${chalk.yellow("⚠")} ${skippedSymlinksCount} symlink${skippedSymlinksCount > 1 ? "s" : ""} skipped.`)
-	if(errorsCount >= 1) console.log(`${chalk.red("✖")} ${errorsCount} error${errorsCount > 1 ? "s" : ""} occurred.`)
 	errorsCount = 0
 	skippedSymlinksCount = 0
+
+	if(!filesCount) process.exit(1)
 
 	// Get infos about the relay server
 	while(relayServer.endsWith("/")) relayServer = relayServer.slice(0, -1)
