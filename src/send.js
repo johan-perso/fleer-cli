@@ -1,5 +1,6 @@
 import chalk from "chalk"
 import ora from "ora"
+import { filesize } from "filesize"
 import path from "node:path"
 import { lstat, readdir } from "node:fs/promises"
 import enquirer from "enquirer"
@@ -54,16 +55,22 @@ export default async function () {
 	}
 
 	const structure = []
+	let totalSizeBytes = 0
 	let filesCount = 0
 	let foldersCount = 0
 
 	const spinner = ora("Checking files...").start()
 	let lastVirtualPathForSpinner = null
-	function _updateFilesFoundSpinner(virtualPath) {
+	function _updateFilesFoundSpinner(virtualPath, forceDisplayTotalSize = false) {
 		if(virtualPath != null && virtualPath !== "disabled") lastVirtualPathForSpinner = virtualPath
 		const hideLastChecked = virtualPath === "disabled" || lastVirtualPathForSpinner == null
 
-		spinner.text = `Found ${intlFormatter.format(filesCount)} file${filesCount > 1 ? "s" : ""} and ${intlFormatter.format(foldersCount)} folder${foldersCount > 1 ? "s" : ""}.${hideLastChecked ? "" : `\n  ${chalk.dim(reduceString.maxLines(`Last checked: ${virtualPath || lastVirtualPathForSpinner}`, 1, 2))}`}${warnings.length ? `\n${warnings.map(msg => `${chalk.yellow("⚠")} ${chalk.dim(reduceString.maxLines(msg, 1, 2))}`).join("\n")}` : ""}`
+		var newText = `Found ${intlFormatter.format(filesCount)} file${filesCount > 1 ? "s" : ""} and ${intlFormatter.format(foldersCount)} folder${foldersCount > 1 ? "s" : ""}.`
+		if (forceDisplayTotalSize || totalSizeBytes > 10_000_000) newText += chalk.dim(` (${filesize(totalSizeBytes)})`)
+		if (!hideLastChecked) newText += `\n  ${chalk.dim(reduceString.maxLines(`Last checked: ${virtualPath || lastVirtualPathForSpinner}`, 1, 2))}`
+		if (warnings.length) newText += `\n${warnings.map(msg => `${chalk.yellow("⚠")} ${chalk.dim(reduceString.maxLines(msg, 1, 2))}`).join("\n")}`
+
+		if (spinner.text !== newText) spinner.text = newText
 	}
 
 	const absoluteLowestPath = await getAbsoluteLowest(filesPath)
@@ -178,13 +185,14 @@ export default async function () {
 			})
 
 			filesCount++
+			totalSizeBytes += stats.size
 			if (filesCount % 100 === 0) _updateFilesFoundSpinner(virtualPath)
 		}
 	}
 
 	// We can display the final count of files/folders found
 	warnings = [] // should not rely on warnings.length bc they are cleared if they are too many
-	_updateFilesFoundSpinner("disabled")
+	_updateFilesFoundSpinner("disabled", true)
 	if(!filesCount) {
 		spinner.fail(spinner.text)
 	} else {

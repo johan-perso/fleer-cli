@@ -18,6 +18,7 @@
 	"dependencies": {
 		"chalk": "6.0.0",
 		"enquirer": "2.4.1",
+		"filesize": "^11.0.22",
 		"ora": "9.4.1",
 		"update-notifier": "7.3.1"
 	},
