@@ -1,15 +1,16 @@
 import chalk from "chalk"
 import ora from "ora"
 import { filesize } from "filesize"
+import enquirer from "enquirer"
 import path from "node:path"
 import { lstat, readdir } from "node:fs/promises"
-import enquirer from "enquirer"
 
 import getAbsoluteLowest from "./utils/absoluteLowest.js"
 import reduceString from "./utils/reduceString.js"
 import doubleCheckPaths from "./utils/doubleCheckPaths.js"
+import encryption from "./utils/encryption.js"
 
-var relayServer = "http://192.168.1.174:8080/"
+var relayServerUrl = "http://192.168.1.174:8080/"
 const supportedProtocolVersions = [1]
 const maxErrorsCount = 20
 
@@ -21,9 +22,10 @@ var disableAskingDoubleCheckPaths = false
 var skippedSymlinksCount = 0
 
 export default async function () {
+	// Get files prompted in the command line arguments
 	var filesPath = process.argv.slice(3)
 	if (filesPath.length === 0) {
-		console.log(chalk.red("No files provided. Please specify at least one file to send."))
+		process.stderr.write(`${chalk.red("✖")} No files provided. Please specify at least one file to send.\n`)
 		process.exit(1)
 	}
 	filesPath = [...new Set(filesPath.map(filePath => path.resolve(filePath)))] // Remove duplicates and resolve paths
@@ -34,7 +36,7 @@ export default async function () {
 		errorsCount++
 		if(errorsCount >= maxErrorsCount) {
 			spinner.clear()
-			console.log(chalk.red(`Encountered ${errorsCount}/${maxErrorsCount} errors. Stopping the process.`))
+			process.stderr.write(chalk.red(`Encountered ${errorsCount}/${maxErrorsCount} errors. Stopping the process.\n`))
 			process.exit(1)
 		}
 	}
@@ -205,36 +207,50 @@ export default async function () {
 
 	if(!filesCount) process.exit(1)
 
+	function displayFatalError(message) {
+		spinner.clear()
+		process.stderr.write(`${chalk.red("✖")} ${message}\n`)
+		process.exit(1)
+	}
+
 	// Get infos about the relay server
-	while(relayServer.endsWith("/")) relayServer = relayServer.slice(0, -1)
-	const relayServerInfos = await fetch(`${relayServer}`).then(res => res.json()).catch(() => null)
-	if(!relayServerInfos) {
-		console.log(chalk.red(`Could not reach the relay server at ${chalk.cyan(relayServer)}.`))
-		process.exit(1)
+	spinner.start("Creating the transfer...")
+	while(relayServerUrl.endsWith("/")) relayServerUrl = relayServerUrl.slice(0, -1)
+	const relayServerInfos = await fetch(`${relayServerUrl}`)
+		.then(res => res.json())
+		.catch(error => {
+			displayFatalError(`Could not reach the relay server at ${chalk.cyan(relayServerUrl)}.\nError: ${error.message}`)
+		})
+
+	if(!relayServerInfos) displayFatalError(`Could not reach the relay server at ${chalk.cyan(relayServerUrl)}.`)
+	if(!relayServerInfos?.data?.message.includes("Fleer Relay API")) displayFatalError(`The relay server at ${chalk.cyan(relayServerUrl)} doesn't seem to be a Fleer Relay server.`)
+	if(!supportedProtocolVersions.includes(relayServerInfos?.data?.server?.protocolVersion)) displayFatalError(`The relay server at ${chalk.cyan(relayServerUrl)} is using an unsupported protocol version (${chalk.cyan(relayServerInfos?.data?.server?.protocolVersion)}). Supported versions are: ${supportedProtocolVersions.map(v => chalk.cyan(v)).join(", ")}.`)
+
+	// Create a transfer to the server
+	const shareCreation = await fetch(`${relayServerUrl}/shares/create`, {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+		},
+		body: JSON.stringify({
+			"encryptionProtocolIndicator": encryption.USED_PROTOCOL_INDICATOR,
+			"filesCount": filesCount,
+			"totalSize": totalSizeBytes
+		}),
+	}).catch(error => {
+		displayFatalError(`Could not reach the relay server at ${chalk.cyan(relayServerUrl)}.\nError: ${error.message}`)
+	})
+	var shareCreationJson
+	try {
+		shareCreationJson = await shareCreation.json()
+	} catch (error) {
+		const responseStatusCode = shareCreation?.status || "unknown"
+		displayFatalError(`Could not parse the response from the relay server at ${chalk.cyan(relayServerUrl)}.\nHTTP Code: ${responseStatusCode}\nError: ${error.message}`)
 	}
-	if(!relayServerInfos?.data?.message.includes("Fleer Backend API")) { // TODO: replace by "Fleer Relay API"
-		console.log(chalk.red(`The relay server at ${chalk.cyan(relayServer)} doesn't seem to be a Fleer Relay server.`))
-		process.exit(1)
-	}
-	if(!supportedProtocolVersions.includes(relayServerInfos?.data?.server?.protocolVersion)) {
-		console.log(chalk.red(`The relay server at ${chalk.cyan(relayServer)} is using an unsupported protocol version (${chalk.cyan(relayServerInfos?.data?.server?.protocolVersion)}). Supported versions are: ${supportedProtocolVersions.map(v => chalk.cyan(v)).join(", ")}.`))
-		process.exit(1)
-	}
+	const shareId = shareCreationJson?.data?.shareId
+	spinner.succeed(`Transfer created successfully. ${chalk.dim("(Share ID:")} ${chalk.dim.cyan(shareId)}${chalk.dim(")")}`)
 }
 
-// async function _askConfirmation(question) {
-// 	const prompt = new enquirer.Confirm({
-// 		name: "confirmation",
-// 		message: question,
-// 		initial: true,
-// 		prefix: chalk.cyan("?"),
-// 		format() {
-// 			return /^[ty1]/i.test(prompt.input) ? "yes" : "no"
-// 		}
-// 	})
-
-// 	return prompt.run()
-// }
 async function _askIgnoreFile(filePath, isFolder = false) {
 	const firstLineMsg = `"${filePath}" is a commonly ignored ${isFolder ? "folder" : "file"}.`
 	const prompt = new enquirer.Select({
