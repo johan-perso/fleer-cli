@@ -157,22 +157,23 @@ export default async function () {
 				}
 
 				var virtualPath = path.relative(absoluteLowestPath, filePath)
-				structure.push({
-					name: path.basename(path.resolve(filePath)),
-					physicalPath: path.resolve(filePath),
-					virtualPath,
-					type: "directory",
-				})
+				if(virtualPath) { // we don't want to add the root folder to the structure
+					structure.push({
+						name: path.basename(path.resolve(filePath)),
+						physicalPath: path.resolve(filePath),
+						virtualPath,
+						type: "directory",
+					})
+					foldersCount++
+				}
 
-				foldersCount++
 				if (foldersCount % 100 === 0) _updateFilesFoundSpinner(virtualPath)
 			}
 		} catch (error) {
 			displayError(error?.code == "ENOENT"
 				? `"${filePath}" does not exist or is not accessible.`
 				: error?.code == "EACCES"
-					? `"${filePath}" is not accessible due to permission issues.`
-					: `"${filePath}" could not be accessed. Error: ${error.message}`)
+					? `"${filePath}" is not accessible due to permission issues.`					: `"${filePath}" could not be accessed. Error: ${error.message}`)
 			continue
 		}
 

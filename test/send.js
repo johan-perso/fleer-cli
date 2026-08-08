@@ -35,7 +35,7 @@ async function main() {
 		"structure": [
 			{
 				"name": "README.md",
-				"path": "./README.md",
+				"virtualPath": "./README.md",
 				"size": 914,
 				"type": "file"
 			}
