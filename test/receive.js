@@ -48,7 +48,7 @@ async function main() {
 	}
 
 	cipher = await ShareCipher.fromShortKey({ shareId, protocolIndicator: encryptionProtocolIndicator, shortKey })
-	const primaryDetails = await cipher.decryptJson(primaryDetailsEncrypted)
+	const primaryDetails = await cipher.decryptJson(primaryDetailsEncrypted, "primary")
 
 	console.log("Decrypted primary details:", primaryDetails)
 

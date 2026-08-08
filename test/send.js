@@ -46,7 +46,7 @@ async function main() {
 	}
 
 	cipher = await ShareCipher.create({ shareId, protocolIndicator: encryptionProtocolIndicator })
-	const encryptedPrimaryDetails = await cipher.encryptJson(primaryDetails)
+	const encryptedPrimaryDetails = await cipher.encryptJson(primaryDetails, "primary")
 
 	const sendPrimaryDetails = await fetch(`${fleerUrl}/shares/chunks?shareId=${shareId}&isThisPrimaryDetails=true`, {
 		method: "PUT",
