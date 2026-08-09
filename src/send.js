@@ -365,10 +365,8 @@ export default async function () {
 			newText += `\n  Took ${chalk.cyan(totalTime > 300 ? `${Math.floor(totalTime / 60)} min ${totalTime % 60} sec` : `${totalTime} sec`)} for ${chalk.cyan(filesize(sentBytesToRelay))}.`
 		} else {
 			newText += `\n\n${chalk.dim(`sent ${chalk.cyan(filesize(sentBytesToRelay))} / ${chalk.cyan(filesize(totalSizeBytes))} (${Math.floor((sentBytesToRelay / totalSizeBytes) * 100)}%)`)}`
-			newText += `\n${chalk.dim(`use ${chalk.cyan("p")} to pause | ${chalk.cyan("Ctrl+C")} to cancel`)}`
+			newText += `\n${chalk.dim(`use ${chalk.cyan("Ctrl+C")} to cancel transfer`)}`
 		}
-		// TODO: faire que ctrl c envoie une alerte au serveur pr dmd un shutdown du transfert, et ptet on se déco avec un code erreur qui sera affichée au client
-		// TODO: permettre de pause avec P
 
 		if (spinner.text !== newText) spinner.text = newText
 		return newText
@@ -624,10 +622,10 @@ export default async function () {
 		}
 
 		// All files have been sent, we can end the sending process
+		socket.send(JSON.stringify({ type: "LastChunk", data: { index: virtualChunkIndex - 1 } }))
 		isSendingProcessEnded = true
 		spinner.succeed(_updateFilesSendingSpinner())
 
-		// TODO: tell receiver we finished sending (through encrypted socket message) - this way the server can't alter the transfer at the very last moment
 		// TODO: then, delete the transfer on the relay server
 	}
 

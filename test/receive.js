@@ -118,6 +118,8 @@ async function handleJsonSocketMessage(message) {
 
 		if(unencryptedMessage?.dataType == "FileChunks") registerChunkForFile(unencryptedMessage)
 		break
+	// TODO: take lastChunkId event in consideration to know when the transfer will complete
+	// TODO: at start, define lastChunkId as _readShare() told us - if we resumed transfer, fetch again
 	default:
 		console.warn("Unknown WebSocket message type:", message.type)
 	}
