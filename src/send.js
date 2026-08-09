@@ -26,6 +26,19 @@ var disableAskingDoubleCheckPaths = false
 var skippedSymlinksCount = 0
 var allowedBytesByRelay = 0
 
+var debugPerformancesCsv = "timestamp,timeSinceLast,action"
+var lastDebugPerformanceTimestamp = Date.now()
+function logDebugPerformance(action) {
+	if (globalThis.debugPerformances !== true) return
+
+	var now = Date.now()
+	var timeSinceLast = now - lastDebugPerformanceTimestamp
+	const escapedAction = action.replace(/,/g, ";") // replace commas with semicolons to avoid breaking the CSV format
+	debugPerformancesCsv += `\n${now},${timeSinceLast},${escapedAction}`
+
+	lastDebugPerformanceTimestamp = now
+}
+
 export default async function () {
 	// Get files prompted in the command line arguments
 	var filesPath = process.argv.slice(3)
@@ -99,7 +112,9 @@ export default async function () {
 	for (const filePath of filesPath) {
 		var stats = null
 		try {
+			logDebugPerformance(`${filePath}: checking file stats`)
 			stats = await lstat(filePath) // lstat instead of stat to avoid following symlinks
+			logDebugPerformance(`${filePath}: checked file stats`)
 
 			// Avoid sending unsupported file types
 			var thingsToTest = [
@@ -125,6 +140,7 @@ export default async function () {
 			}
 
 			// Check for ignored paths if disableAskingDoubleCheckPaths != true
+			logDebugPerformance(`${filePath}: checking doubleCheckPaths`)
 			if(!disableAskingDoubleCheckPaths) {
 				const isDoubleCheckPath = doubleCheckPaths.some(doubleCheckPath => path.basename(filePath).toLowerCase() === doubleCheckPath.toLowerCase())
 				if (isDoubleCheckPath) { // found a folder that is commonly ignored
@@ -154,8 +170,10 @@ export default async function () {
 					}
 				}
 			}
+			logDebugPerformance(`${filePath}: checked doubleCheckPaths`)
 
 			if (stats.isDirectory()) {
+				logDebugPerformance(`${filePath}: checking directory contents`)
 				// Read files in the directory and add them to the list of files to send
 				const filesInDirectory = await readdir(filePath)
 				for (const fileInDirectory of filesInDirectory) {
@@ -174,6 +192,7 @@ export default async function () {
 					})
 					foldersCount++
 				}
+				logDebugPerformance(`${filePath}: checked directory contents`)
 
 				if (foldersCount % 100 === 0) _updateFilesFoundSpinner(virtualPath)
 			}
@@ -230,6 +249,8 @@ export default async function () {
 	}
 
 	// Get infos about the relay server
+	logDebugPerformance("---------------")
+	logDebugPerformance("relayServerInfos...")
 	spinner.start("Creating the transfer...")
 	while(relayServerUrl.endsWith("/")) relayServerUrl = relayServerUrl.slice(0, -1)
 	const relayServerInfos = await fetch(`${relayServerUrl}`)
@@ -237,6 +258,7 @@ export default async function () {
 		.catch(error => {
 			displayFatalError(`Could not reach the relay server at ${chalk.cyan(relayServerUrl)}.\n  Error: ${error.message}`)
 		})
+	logDebugPerformance("relayServerInfos!")
 
 	if(!relayServerInfos) displayFatalError(`Could not reach the relay server at ${chalk.cyan(relayServerUrl)}.`)
 	if(!relayServerInfos?.data?.message.includes("Fleer Relay API")) displayFatalError(`The relay server at ${chalk.cyan(relayServerUrl)} doesn't seem to be a Fleer Relay server.`)
@@ -250,6 +272,7 @@ export default async function () {
 	}
 
 	// Create a transfer to the server
+	logDebugPerformance("shareCreation...")
 	const shareCreation = await fetch(`${relayServerUrl}/shares/create`, {
 		method: "POST",
 		headers: {
@@ -271,11 +294,13 @@ export default async function () {
 		const responseStatusCode = shareCreation?.status || "unknown"
 		displayFatalError(`Could not parse the response from the relay server.\n  HTTP Code: ${responseStatusCode}\n  Error: ${error.message}`)
 	}
+	logDebugPerformance("shareCreation!")
 	const shareId = shareCreationJson?.data?.shareId
 	spinner.succeed(`Transfer created successfully. ${chalk.dim("(Share ID:")} ${chalk.dim.cyan(shareId)}${chalk.dim(")")}`)
 
 	// Create, encrypt and send the primary details to the server
 	spinner.start("Sending transfer details...")
+	logDebugPerformance("Creating primaryDetails...")
 	const primaryDetails = {
 		"structure": structure.map(item => ({
 			name: item.name,
@@ -293,10 +318,15 @@ export default async function () {
 			...item,
 			instance: null
 		}))
+	logDebugPerformance("Created primaryDetails!")
 
 	const cipher = await encryption.ShareCipher.create({ shareId, protocolIndicator: encryption.USED_PROTOCOL_INDICATOR })
 
+	logDebugPerformance("Encrypting primaryDetails...")
 	const encryptedPrimaryDetails = await cipher.encryptJson(primaryDetails, "primary")
+	logDebugPerformance("Encrypted primaryDetails!")
+
+	logDebugPerformance("Sending primaryDetails...")
 	const sendPrimaryDetails = await fetch(`${relayServerUrl}/shares/chunks?shareId=${shareId}&isThisPrimaryDetails=true`, {
 		method: "PUT",
 		headers: {
@@ -313,6 +343,7 @@ export default async function () {
 		const responseStatusCode = sendPrimaryDetails?.status || "unknown"
 		displayFatalError(`Could not parse the response from the relay server while sending the primary details.\n  HTTP Code: ${responseStatusCode}\n  Error: ${error.message}`)
 	}
+	logDebugPerformance("Sent primaryDetails!")
 
 	const errorSuffix = "\n  This is likely due to a misconfiguration or an unsupported relay server.\n  Please contact the relay server administrator for further assistance."
 	if(sendPrimaryDetailsJson?.data?.chunkId !== null) displayFatalError(`The relay server returned an unexpected chunk ID while sending the primary details.${errorSuffix}`)
@@ -403,7 +434,6 @@ export default async function () {
 			spinner.start(_updateFilesSendingSpinner())
 
 			if(!currentSendingProcessId) sendFiles()
-
 			break
 		case "allowedBytesMaxUpdate":
 			// The relay server is limiting the amount of bytes it can keep in cache,
@@ -507,9 +537,11 @@ export default async function () {
 		lastSocketWarning = null
 
 		// Loop through every file and send them chunk by chunk to the relay server, which will then be sent to the receiver
+		logDebugPerformance("---------------")
 		for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
 			const file = files[fileIndex]
 			const total = Math.ceil(file.size / CHUNK_SIZE)
+			logDebugPerformance(`${file.virtualPath}: ${total} chunks to send`)
 
 			files[fileIndex].instance = Bun.file(files[fileIndex].physicalPath) // create a file instance right now to avoid keeping it in memory for too long
 
@@ -522,6 +554,7 @@ export default async function () {
 
 			// Send infos about this file to the relay server, this allows the receiver to know where to save the chunks he's about to receive
 			if(!_checkIfSendingProcessIsStillValid(sendingProcessId)) return
+			logDebugPerformance(`${file.virtualPath}: sending FileChunks info to relay server`)
 			socket.send(JSON.stringify({
 				type: "SendMsgToOtherWay",
 				data: await cipher.encryptJson({
@@ -533,14 +566,19 @@ export default async function () {
 					path: file.virtualPath
 				})
 			}))
+			logDebugPerformance(`${file.virtualPath}: sent FileChunks info`)
 
 			// Loop through every chunk of the current file and send them to the relay server
 			for (let currentFileChunkIndex = 0; currentFileChunkIndex < total; currentFileChunkIndex++) {
+				logDebugPerformance(`${file.virtualPath}: Slicing chunk ${currentFileChunkIndex + 1}/${total} (virtualChunkIndex: ${virtualChunkIndex})`)
 				const slice = file.instance.slice(currentFileChunkIndex * CHUNK_SIZE, (currentFileChunkIndex + 1) * CHUNK_SIZE)
 				const bytes = new Uint8Array(await slice.arrayBuffer())
+				logDebugPerformance(`${file.virtualPath}: Sliced chunk ${currentFileChunkIndex + 1}/${total} (virtualChunkIndex: ${virtualChunkIndex})`)
 				currentChunkSentBytes = 0
 
+				logDebugPerformance(`${file.virtualPath}: Encrypting chunk ${currentFileChunkIndex + 1}/${total} (virtualChunkIndex: ${virtualChunkIndex})`)
 				const payload = await cipher.encryptChunk(bytes, virtualChunkIndex) // encrypt the chunk
+				logDebugPerformance(`${file.virtualPath}: Encrypted chunk ${currentFileChunkIndex + 1}/${total} (virtualChunkIndex: ${virtualChunkIndex})`)
 				if(!_checkIfSendingProcessIsStillValid(sendingProcessId)) return
 
 				while (allowedBytesByRelay !== null && payload.length + sentBytesToRelay > allowedBytesByRelay) { // 1st check for allowed bytes by relay
@@ -572,6 +610,7 @@ export default async function () {
 						}
 					}
 				)
+				logDebugPerformance(`${file.virtualPath}: Starting to send chunk ${currentFileChunkIndex + 1}/${total} (virtualChunkIndex: ${virtualChunkIndex}) to relay server`)
 				const response = await fetch( // send the chunk to the relay server
 					`${relayServerUrl}/shares/chunks?shareId=${shareId}&chunkId=${virtualChunkIndex}`,
 					{
@@ -593,6 +632,7 @@ export default async function () {
 					const responseStatusCode = response?.status || "unknown"
 					displayFatalError(`Could not parse the response from the relay server while sending chunk ${currentFileChunkIndex + 1}/${total} of file ${fileIndex + 1}/${files.length} (virtualChunkIndex: ${virtualChunkIndex}).\n  HTTP Code: ${responseStatusCode}\n  Error: ${error.message}`)
 				}
+				logDebugPerformance(`${file.virtualPath}: Sent chunk ${currentFileChunkIndex + 1}/${total} (virtualChunkIndex: ${virtualChunkIndex}) to relay server`)
 
 				if(responseJson?.error == "wait_before_uploading") { // 2nd check for allowed bytes by relay
 					currentFileChunkIndex-- // retry the same chunk
@@ -625,6 +665,13 @@ export default async function () {
 		socket.send(JSON.stringify({ type: "LastChunk", data: { index: virtualChunkIndex - 1 } }))
 		isSendingProcessEnded = true
 		spinner.succeed(_updateFilesSendingSpinner())
+
+		// Save debug performances file on disk
+		if (globalThis.debugPerformances === true) {
+			const debugFilePath = path.join(process.cwd(), `fleer_send_debug_performances_${Date.now()}.csv`)
+			await Bun.write(debugFilePath, debugPerformancesCsv)
+			console.log(`Debug performances saved to ${chalk.cyan(debugFilePath)}`)
+		}
 
 		// TODO: then, delete the transfer on the relay server
 	}

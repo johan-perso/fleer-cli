@@ -66,6 +66,9 @@ function showVersion(){
 
 // Check if some arguments are present
 const defaultArgs = process.argv.slice(2)
+
+if(defaultArgs.includes("--debug-performances")) globalThis.debugPerformances = true
+
 if(defaultArgs.includes("version") || defaultArgs.includes("v") || defaultArgs.includes("--version") || defaultArgs.includes("-v")) showVersion()
 else if(defaultArgs.includes("help") || defaultArgs.includes("h") || defaultArgs.includes("--help") || defaultArgs.includes("-h")) showHelp()
 else if(defaultArgs.includes("send") || defaultArgs.includes("s") || defaultArgs.includes("upload") || defaultArgs.includes("u")) checkUpdate() && sendFiles()
