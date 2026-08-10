@@ -4,6 +4,7 @@ import boxen from "boxen"
 import { filesize } from "filesize"
 import path from "node:path"
 import { lstat, readdir } from "node:fs/promises"
+import { stripVTControlCharacters as stripAnsi } from "node:util"
 
 import getAbsoluteLowest from "./utils/absoluteLowest.js"
 import reduceString from "./utils/reduceString.js"
@@ -435,7 +436,7 @@ export default async function () {
 			console.log() // line break
 			// TODO: create a fleer help-download command to explain why we need all of that, and how to use it efficiently
 			console.log(boxen(
-				`Start downloading files from any Fleer compatible app by using one of${process.stdout.columns >= 80 ? "\n" : " "}the following methods (use ${chalk.dim("fleer help-download")} for more infos).\n\n • ${chalk.bold("Share Link")}${shouldJumpLine ? "\n   " : "      "}${chalk.cyan(shareLink)}\n • ${chalk.bold("Via Fleer CLI")}${shouldJumpLine ? "\n   " : "   "}${chalk.cyan(`fleer d ${shareLink}`)}\n\n • ${chalk.bold("Using Keys")}      Share Key: ${chalk.cyan(shareId)}   Encryption: ${chalk.cyan(`${encryption.USED_PROTOCOL_INDICATOR}.${cipher.shortKey}`)}\n ${chalk.dim("(for experts)")}     Relay Server: ${chalk.cyan(relayServerUrl)}`,
+				`Start downloading files from any Fleer compatible app by using one of${process.stdout.columns >= 80 ? "\n" : " "}the following methods (use ${chalk.dim("fleer help-download")} for more infos).\n\n • ${chalk.bold("Share Link")}${shouldJumpLine ? "\n   " : "      "}${chalk.cyan(stripAnsi(shareLink))}\n • ${chalk.bold("Via Fleer CLI")}${shouldJumpLine ? "\n   " : "   "}${chalk.cyan(`fleer d ${stripAnsi(shareLink)}`)}\n\n • ${chalk.bold("Using Keys")}      Share Key: ${chalk.cyan(stripAnsi(shareId))}   Encryption: ${chalk.cyan(`${stripAnsi(encryption.USED_PROTOCOL_INDICATOR.toString())}.${stripAnsi(cipher.shortKey)}`)}\n ${chalk.dim("(for experts)")}     Relay Server: ${chalk.cyan(stripAnsi(relayServerUrl))}`,
 				{ padding: 1, borderStyle: "round", borderColor: "cyan" }
 			))
 			console.log() // line break
