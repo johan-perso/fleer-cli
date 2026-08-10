@@ -1,5 +1,6 @@
 import chalk from "chalk"
 import ora from "ora"
+import boxen from "boxen"
 import { filesize } from "filesize"
 import path from "node:path"
 import { lstat, readdir } from "node:fs/promises"
@@ -428,9 +429,17 @@ export default async function () {
 			if(!isConnectedToShareDisplayedOnce) spinner.succeed("Real-time connection established. Ready to send files.")
 			isConnectedToShareDisplayedOnce = true
 
-			// TODO: display connection in a boxen or smth
+			const shareLink = `${relayServerUrl}/s/${shareId}#${encryption.USED_PROTOCOL_INDICATOR}.${cipher.shortKey}`
+			const shouldJumpLine = shareLink.length > 80 || shareLink.length > (process.stdout.columns / 1.5)
 
 			console.log() // line break
+			// TODO: create a fleer help-download command to explain why we need all of that, and how to use it efficiently
+			console.log(boxen(
+				`Start downloading files from any Fleer compatible app by using one of${process.stdout.columns >= 80 ? "\n" : " "}the following methods (use ${chalk.dim("fleer help-download")} for more infos).\n\n • ${chalk.bold("Share Link")}${shouldJumpLine ? "\n   " : "      "}${chalk.cyan(shareLink)}\n • ${chalk.bold("Via Fleer CLI")}${shouldJumpLine ? "\n   " : "   "}${chalk.cyan(`fleer d ${shareLink}`)}\n\n • ${chalk.bold("Using Keys")}      Share Key: ${chalk.cyan(shareId)}   Encryption: ${chalk.cyan(`${encryption.USED_PROTOCOL_INDICATOR}.${cipher.shortKey}`)}\n ${chalk.dim("(for experts)")}     Relay Server: ${chalk.cyan(relayServerUrl)}`,
+				{ padding: 1, borderStyle: "round", borderColor: "cyan" }
+			))
+			console.log() // line break
+
 			spinner.start(_updateFilesSendingSpinner())
 
 			if(!currentSendingProcessId) sendFiles()
@@ -674,6 +683,7 @@ export default async function () {
 		}
 
 		// TODO: then, delete the transfer on the relay server
+		process.exit()
 	}
 
 	// Method to check if the transfer was not interrupted by another part of the code
