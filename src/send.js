@@ -14,6 +14,7 @@ import getDeviceName from "./utils/getDeviceName.js"
 import { askConfirmation, askIgnoreFile } from "./utils/tuiPrompts.js"
 import streamWithProgress from "./utils/streamWithProgress.js"
 import displayFatalError from "./utils/displayFatalError.js"
+import displayWarning from "./utils/displayWarning.js"
 import checkRelayAccess from "./utils/checkRelayAccess.js"
 import { logDebugPerformance, saveDebugPerformances } from "./utils/debugPerformances.js"
 
@@ -49,13 +50,6 @@ export default async function () {
 			process.stderr.write(chalk.red(`Encountered ${errorsCount}/${maxErrorsCount} errors. Stopping the process.\n`))
 			process.exit(1)
 		}
-	}
-
-	function displayWarning(message) {
-		var shouldResumeSpinner = spinner.isSpinning
-		if (spinner.isSpinning) spinner.stop()
-		console.log(`${chalk.yellow("⚠")} ${message}`)
-		if (shouldResumeSpinner) spinner.start()
 	}
 
 	let warnings = []
@@ -229,7 +223,7 @@ export default async function () {
 	if(!filesCount) process.exit(1)
 
 	if (relayServerUrl.startsWith("http://")) {
-		displayWarning(`You are using an unencrypted connection to the relay server (${chalk.bold.bgRed.cyan("http://")}${chalk.cyan(relayServerUrl.replace("http://", ""))}).\n  This is not recommended, as it could expose your data to potential Man-in-the-Middle attacks.\n  If possible, please use a secure connection (https://) to the relay server.`)
+		displayWarning(`You are using an unencrypted connection to the relay server (${chalk.bold.bgRed.cyan("http://")}${chalk.cyan(stripAnsi(relayServerUrl).replace("http://", ""))}).\n  This is not recommended, as it could expose your data to potential Man-in-the-Middle attacks.\n  If possible, please use a secure connection (https://) to the relay server.`)
 		const shouldContinueHTTP = await askConfirmation("Do you want to continue anyway?")
 		if (!shouldContinueHTTP) return process.exit()
 	}
@@ -248,13 +242,12 @@ export default async function () {
 			"Content-Type": "application/json",
 		},
 		body: JSON.stringify({
-			"encryptionProtocolIndicator": encryption.USED_PROTOCOL_INDICATOR,
 			"filesCount": filesCount,
 			"foldersCount": foldersCount,
 			"totalSize": totalSizeBytes
 		}),
 	}).catch(error => {
-		displayFatalError(`Could not reach the relay server at ${chalk.cyan(relayServerUrl)}.\n  Error: ${error.message}`, spinner)
+		displayFatalError(`Could not reach the relay server at ${chalk.cyan(stripAnsi(relayServerUrl))}.\n  Error: ${error.message}`, spinner)
 	})
 	var shareCreationJson
 	try {
@@ -263,9 +256,12 @@ export default async function () {
 		const responseStatusCode = shareCreation?.status || "unknown"
 		displayFatalError(`Could not parse the response from the relay server.\n  HTTP Code: ${responseStatusCode}\n  Error: ${error.message}`, spinner)
 	}
+	if(shareCreationJson?.error) {
+		displayFatalError(`Relay server threw an error (${chalk.dim(stripAnsi(shareCreationJson?.data?.error || shareCreationJson?.error))}):\n  ${stripAnsi(shareCreationJson?.data?.message || shareCreationJson?.message || JSON.stringify(shareCreationJson))}.`, spinner)
+	}
 	logDebugPerformance("shareCreation!")
 	const shareId = shareCreationJson?.data?.shareId
-	spinner.succeed(`Transfer created successfully. ${chalk.dim("(Share ID:")} ${chalk.dim.cyan(shareId)}${chalk.dim(")")}`)
+	spinner.succeed(`Transfer created successfully. ${chalk.dim(`(Share ID: ${chalk.cyan(stripAnsi(shareId))})`)}`)
 
 	// Create, encrypt and send the primary details to the server
 	spinner.start("Sending transfer details...")
@@ -311,6 +307,9 @@ export default async function () {
 	} catch (error) {
 		const responseStatusCode = sendPrimaryDetails?.status || "unknown"
 		displayFatalError(`Could not parse the response from the relay server while sending the primary details.\n  HTTP Code: ${responseStatusCode}\n  Error: ${error.message}`, spinner)
+	}
+	if(sendPrimaryDetailsJson?.error) {
+		displayFatalError(`Relay server threw an error (${chalk.dim(stripAnsi(sendPrimaryDetailsJson?.data?.error || sendPrimaryDetailsJson?.error))}):\n  ${stripAnsi(sendPrimaryDetailsJson?.data?.message || sendPrimaryDetailsJson?.message || JSON.stringify(sendPrimaryDetailsJson))}.`, spinner)
 	}
 	logDebugPerformance("Sent primaryDetails!")
 
@@ -387,11 +386,11 @@ export default async function () {
 			spinner.text = `Establishing real-time connection to the relay server... ${chalk.dim("(Connected)")}`
 			break
 		case "error": // connection is not closed, act as a warning
-			lastSocketWarning = `${message?.data?.error} - ${message?.data?.message}`
+			lastSocketWarning = stripAnsi(`${message?.data?.error || message?.error} - ${message?.data?.message || message?.message || JSON.stringify(message)}`)
 			_updateFilesSendingSpinner()
 			break
 		case "fatal": // connection is closed afterwards
-			displayFatalError(`Relay Server returned a fatal error: ${message?.data?.error} - ${message?.data?.message}`, spinner)
+			displayFatalError(`Relay server threw an error (${chalk.dim(stripAnsi(message?.data?.error || message?.error))}):\n  ${stripAnsi(message?.data?.message || message?.message || JSON.stringify(message))}.`, spinner)
 			break
 		case "connectedToShare":
 			if(!isConnectedToShareDisplayedOnce) spinner.succeed("Real-time connection established. Ready to send files.")
@@ -616,6 +615,8 @@ export default async function () {
 					_updateFilesSendingSpinner()
 					await new Promise(resolve => setTimeout(resolve, 500))
 					continue
+				} else if(responseJson?.error) {
+					displayFatalError(`Relay server threw an error (${chalk.dim(stripAnsi(responseJson?.data?.error || responseJson?.error))}):\n  ${stripAnsi(responseJson?.data?.message || responseJson?.message || JSON.stringify(responseJson))}.`, spinner)
 				}
 
 				// We sent the chunk successfully, so we can update displayed spinner accordingly

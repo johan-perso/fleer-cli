@@ -20,6 +20,9 @@ export default async function ({ relayUrl, spinner, logDebugPerformance, support
 	logDebugPerformance("relayServerInfos!")
 
 	if(!relayServerInfosJson) displayFatalError(`Could not reach the relay server at ${chalk.cyan(relayUrl)}.`, spinner)
+	if(relayServerInfosJson?.error) {
+		displayFatalError(`Relay server threw an error (${chalk.dim(relayServerInfosJson?.data?.error || relayServerInfosJson?.error)}):\n  ${relayServerInfosJson?.data?.message || relayServerInfosJson?.message || JSON.stringify(relayServerInfosJson)}.`, spinner)
+	}
 	if(!relayServerInfosJson?.data?.message.includes("Fleer Relay API")) displayFatalError(`The relay server at ${chalk.cyan(relayUrl)} doesn't seem to be a Fleer Relay server.`, spinner)
 
 	if(!supportedProtocolVersions.includes(relayServerInfosJson?.data?.server?.protocolVersion)) {
