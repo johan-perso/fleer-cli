@@ -43,7 +43,7 @@ function logDebugPerformance(action) {
 
 export default async function () {
 	// Get files prompted in the command line arguments
-	var filesPath = process.argv.slice(3)
+	var filesPath = globalThis.defaultArgs.slice(1)
 	if (filesPath.length === 0) {
 		process.stderr.write(`${chalk.red("✖")} No files provided. Please specify at least one file to send.\n`)
 		process.exit(1)
@@ -352,7 +352,7 @@ export default async function () {
 	if(sendPrimaryDetailsJson?.data?.bytes < 1) displayFatalError(`The relay server returned an unexpected number of bytes received while sending the primary details.${errorSuffix}`)
 	if(sendPrimaryDetailsJson?.data?.allowedBytesMax < 1) displayFatalError(`The relay server returned an unexpected number of bytes allowed while sending the primary details.${errorSuffix}`)
 	allowedBytesByRelay = sendPrimaryDetailsJson?.data?.allowedBytesMax || 0
-	spinner.succeed(`Transfer details sent successfully. ${chalk.dim("(🔐")} ${chalk.dim.cyan(cipher.shortKey)}${chalk.dim(")")}`)
+	spinner.succeed(`Transfer details sent successfully. ${chalk.dim("(🔐")} ${chalk.dim.cyan(`${encryption.USED_PROTOCOL_INDICATOR}.${cipher.shortKey}`)}${chalk.dim(")")}`)
 
 	// Initialize a few (many 💀) variables for the files sending process
 	var currentSendingProcessId = null
@@ -430,13 +430,13 @@ export default async function () {
 			if(!isConnectedToShareDisplayedOnce) spinner.succeed("Real-time connection established. Ready to send files.")
 			isConnectedToShareDisplayedOnce = true
 
-			const shareLink = `${relayServerUrl}/s/${shareId}#${encryption.USED_PROTOCOL_INDICATOR}.${cipher.shortKey}`
+			const shareLink = `${relayServerUrl}/d/${shareId}#${encryption.USED_PROTOCOL_INDICATOR}.${cipher.shortKey}`
 			const shouldJumpLine = shareLink.length > 80 || shareLink.length > (process.stdout.columns / 1.5)
 
 			console.log() // line break
 			// TODO: create a fleer help-download command to explain why we need all of that, and how to use it efficiently
 			console.log(boxen(
-				`Start downloading files from any Fleer compatible app by using one of${process.stdout.columns >= 80 ? "\n" : " "}the following methods (use ${chalk.dim("fleer help-download")} for more infos).\n\n • ${chalk.bold("Share Link")}${shouldJumpLine ? "\n   " : "      "}${chalk.cyan(stripAnsi(shareLink))}\n • ${chalk.bold("Via Fleer CLI")}${shouldJumpLine ? "\n   " : "   "}${chalk.cyan(`fleer d ${stripAnsi(shareLink)}`)}\n\n • ${chalk.bold("Using Keys")}      Share Key: ${chalk.cyan(stripAnsi(shareId))}   Encryption: ${chalk.cyan(`${stripAnsi(encryption.USED_PROTOCOL_INDICATOR.toString())}.${stripAnsi(cipher.shortKey)}`)}\n ${chalk.dim("(for experts)")}     Relay Server: ${chalk.cyan(stripAnsi(relayServerUrl))}`,
+				`Start downloading files from any Fleer-compatible app using one of${process.stdout.columns >= 80 ? "\n" : " "}the following methods (use ${chalk.dim("fleer help-download")} for more details).\n\n • ${chalk.bold("Share Link")}${shouldJumpLine ? "\n   " : "      "}${chalk.cyan(stripAnsi(shareLink))}\n • ${chalk.bold("Via Fleer CLI")}${shouldJumpLine ? "\n   " : "   "}${chalk.cyan(`fleer d ${stripAnsi(shareLink)}`)}\n\n • ${chalk.bold("Using Keys")}      Share Key: ${chalk.cyan(stripAnsi(shareId))}   Encryption: ${chalk.cyan(`${stripAnsi(encryption.USED_PROTOCOL_INDICATOR.toString())}.${stripAnsi(cipher.shortKey)}`)}\n ${chalk.dim("(for experts)")}     Relay Server: ${chalk.cyan(stripAnsi(relayServerUrl))}`,
 				{ padding: 1, borderStyle: "round", borderColor: "cyan" }
 			))
 			console.log() // line break
