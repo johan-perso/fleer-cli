@@ -13,6 +13,9 @@ import encryption from "./utils/encryption.js"
 import getDeviceName from "./utils/getDeviceName.js"
 import { askConfirmation, askIgnoreFile } from "./utils/tuiPrompts.js"
 import streamWithProgress from "./utils/streamWithProgress.js"
+import displayFatalError from "./utils/displayFatalError.js"
+import checkRelayAccess from "./utils/checkRelayAccess.js"
+import { logDebugPerformance, saveDebugPerformances } from "./utils/debugPerformances.js"
 
 var relayServerUrl = "http://192.168.1.174:8080/"
 const CHUNK_SIZE = 5 * 1024 * 1024 // 5 MiB
@@ -27,19 +30,6 @@ var disableAskingDoubleCheckPaths = false
 
 var skippedSymlinksCount = 0
 var allowedBytesByRelay = 0
-
-var debugPerformancesCsv = "timestamp,timeSinceLast,action"
-var lastDebugPerformanceTimestamp = Date.now()
-function logDebugPerformance(action) {
-	if (globalThis.debugPerformances !== true) return
-
-	var now = Date.now()
-	var timeSinceLast = now - lastDebugPerformanceTimestamp
-	const escapedAction = action.replace(/,/g, ";") // replace commas with semicolons to avoid breaking the CSV format
-	debugPerformancesCsv += `\n${now},${timeSinceLast},${escapedAction}`
-
-	lastDebugPerformanceTimestamp = now
-}
 
 export default async function () {
 	// Get files prompted in the command line arguments
@@ -238,12 +228,6 @@ export default async function () {
 
 	if(!filesCount) process.exit(1)
 
-	function displayFatalError(message) {
-		spinner.clear()
-		process.stderr.write(`${chalk.red("✖")} ${message}\n`)
-		process.exit(1)
-	}
-
 	if (relayServerUrl.startsWith("http://")) {
 		displayWarning(`You are using an unencrypted connection to the relay server (${chalk.bold.bgRed.cyan("http://")}${chalk.cyan(relayServerUrl.replace("http://", ""))}).\n  This is not recommended, as it could expose your data to potential Man-in-the-Middle attacks.\n  If possible, please use a secure connection (https://) to the relay server.`)
 		const shouldContinueHTTP = await askConfirmation("Do you want to continue anyway?")
@@ -252,26 +236,9 @@ export default async function () {
 
 	// Get infos about the relay server
 	logDebugPerformance("---------------")
-	logDebugPerformance("relayServerInfos...")
 	spinner.start("Creating the transfer...")
 	while(relayServerUrl.endsWith("/")) relayServerUrl = relayServerUrl.slice(0, -1)
-	const relayServerInfos = await fetch(`${relayServerUrl}`)
-		.then(res => res.json())
-		.catch(error => {
-			displayFatalError(`Could not reach the relay server at ${chalk.cyan(relayServerUrl)}.\n  Error: ${error.message}`)
-		})
-	logDebugPerformance("relayServerInfos!")
-
-	if(!relayServerInfos) displayFatalError(`Could not reach the relay server at ${chalk.cyan(relayServerUrl)}.`)
-	if(!relayServerInfos?.data?.message.includes("Fleer Relay API")) displayFatalError(`The relay server at ${chalk.cyan(relayServerUrl)} doesn't seem to be a Fleer Relay server.`)
-
-	if(!supportedProtocolVersions.includes(relayServerInfos?.data?.server?.protocolVersion)) {
-		spinner.stop()
-		displayWarning(`The relay server at ${chalk.cyan(relayServerUrl)} is using an unsupported protocol version (${chalk.cyan(relayServerInfos?.data?.server?.protocolVersion)}).\n  The use of this relay could cause issues when sending or receiving files.\n  Supported versions by Fleer CLI are: ${supportedProtocolVersions.map(v => chalk.cyan(v)).join(", ")}.`)
-		const shouldContinueIncompatibleProtocol = await askConfirmation("Do you want to continue anyway?")
-		if (!shouldContinueIncompatibleProtocol) return process.exit()
-		else spinner.start()
-	}
+	await checkRelayAccess({ relayUrl: relayServerUrl, spinner, logDebugPerformance, supportedProtocolVersions })
 
 	// Create a transfer to the server
 	logDebugPerformance("shareCreation...")
@@ -287,14 +254,14 @@ export default async function () {
 			"totalSize": totalSizeBytes
 		}),
 	}).catch(error => {
-		displayFatalError(`Could not reach the relay server at ${chalk.cyan(relayServerUrl)}.\n  Error: ${error.message}`)
+		displayFatalError(`Could not reach the relay server at ${chalk.cyan(relayServerUrl)}.\n  Error: ${error.message}`, spinner)
 	})
 	var shareCreationJson
 	try {
 		shareCreationJson = await shareCreation.json()
 	} catch (error) {
 		const responseStatusCode = shareCreation?.status || "unknown"
-		displayFatalError(`Could not parse the response from the relay server.\n  HTTP Code: ${responseStatusCode}\n  Error: ${error.message}`)
+		displayFatalError(`Could not parse the response from the relay server.\n  HTTP Code: ${responseStatusCode}\n  Error: ${error.message}`, spinner)
 	}
 	logDebugPerformance("shareCreation!")
 	const shareId = shareCreationJson?.data?.shareId
@@ -336,21 +303,21 @@ export default async function () {
 		},
 		body: encryptedPrimaryDetails
 	}).catch(error => {
-		displayFatalError(`Could not send primary details to the relay server.\n  Error: ${error.message}`)
+		displayFatalError(`Could not send primary details to the relay server.\n  Error: ${error.message}`, spinner)
 	})
 	var sendPrimaryDetailsJson
 	try {
 		sendPrimaryDetailsJson = await sendPrimaryDetails.json()
 	} catch (error) {
 		const responseStatusCode = sendPrimaryDetails?.status || "unknown"
-		displayFatalError(`Could not parse the response from the relay server while sending the primary details.\n  HTTP Code: ${responseStatusCode}\n  Error: ${error.message}`)
+		displayFatalError(`Could not parse the response from the relay server while sending the primary details.\n  HTTP Code: ${responseStatusCode}\n  Error: ${error.message}`, spinner)
 	}
 	logDebugPerformance("Sent primaryDetails!")
 
 	const errorSuffix = "\n  This is likely due to a misconfiguration or an unsupported relay server.\n  Please contact the relay server administrator for further assistance."
-	if(sendPrimaryDetailsJson?.data?.chunkId !== null) displayFatalError(`The relay server returned an unexpected chunk ID while sending the primary details.${errorSuffix}`)
-	if(sendPrimaryDetailsJson?.data?.bytes < 1) displayFatalError(`The relay server returned an unexpected number of bytes received while sending the primary details.${errorSuffix}`)
-	if(sendPrimaryDetailsJson?.data?.allowedBytesMax < 1) displayFatalError(`The relay server returned an unexpected number of bytes allowed while sending the primary details.${errorSuffix}`)
+	if(sendPrimaryDetailsJson?.data?.chunkId !== null) displayFatalError(`The relay server returned an unexpected chunk ID while sending the primary details.${errorSuffix}`, spinner)
+	if(sendPrimaryDetailsJson?.data?.bytes < 1) displayFatalError(`The relay server returned an unexpected number of bytes received while sending the primary details.${errorSuffix}`, spinner)
+	if(sendPrimaryDetailsJson?.data?.allowedBytesMax < 1) displayFatalError(`The relay server returned an unexpected number of bytes allowed while sending the primary details.${errorSuffix}`, spinner)
 	allowedBytesByRelay = sendPrimaryDetailsJson?.data?.allowedBytesMax || 0
 	spinner.succeed(`Transfer details sent successfully. ${chalk.dim("(🔐")} ${chalk.dim.cyan(`${encryption.USED_PROTOCOL_INDICATOR}.${cipher.shortKey}`)}${chalk.dim(")")}`)
 
@@ -424,17 +391,16 @@ export default async function () {
 			_updateFilesSendingSpinner()
 			break
 		case "fatal": // connection is closed afterwards
-			displayFatalError(`Relay Server returned a fatal error: ${message?.data?.error} - ${message?.data?.message}`)
+			displayFatalError(`Relay Server returned a fatal error: ${message?.data?.error} - ${message?.data?.message}`, spinner)
 			break
 		case "connectedToShare":
 			if(!isConnectedToShareDisplayedOnce) spinner.succeed("Real-time connection established. Ready to send files.")
 			isConnectedToShareDisplayedOnce = true
 
 			const shareLink = `${relayServerUrl}/d/${shareId}#${encryption.USED_PROTOCOL_INDICATOR}.${cipher.shortKey}`
-			const shouldJumpLine = shareLink.length > 80 || shareLink.length > (process.stdout.columns / 1.5)
+			const shouldJumpLine = shareLink.length > 80 || (`fleer d ${shareLink}`).length > (process.stdout.columns / 1.5)
 
 			console.log() // line break
-			// TODO: create a fleer help-download command to explain why we need all of that, and how to use it efficiently
 			console.log(boxen(
 				`Start downloading files from any Fleer-compatible app using one of${process.stdout.columns >= 80 ? "\n" : " "}the following methods (use ${chalk.dim("fleer help-download")} for more details).\n\n • ${chalk.bold("Share Link")}${shouldJumpLine ? "\n   " : "      "}${chalk.cyan(stripAnsi(shareLink))}\n • ${chalk.bold("Via Fleer CLI")}${shouldJumpLine ? "\n   " : "   "}${chalk.cyan(`fleer d ${stripAnsi(shareLink)}`)}\n\n • ${chalk.bold("Using Keys")}      Share Key: ${chalk.cyan(stripAnsi(shareId))}   Encryption: ${chalk.cyan(`${stripAnsi(encryption.USED_PROTOCOL_INDICATOR.toString())}.${stripAnsi(cipher.shortKey)}`)}\n ${chalk.dim("(for experts)")}     Relay Server: ${chalk.cyan(stripAnsi(relayServerUrl))}`,
 				{ padding: 1, borderStyle: "round", borderColor: "cyan" }
@@ -632,7 +598,7 @@ export default async function () {
 						body: currentChunkStream
 					},
 				).catch(error => {
-					displayFatalError(`Could not send chunk ${currentFileChunkIndex + 1}/${total} of file ${fileIndex + 1}/${files.length} (virtualChunkIndex: ${virtualChunkIndex}) to the relay server.\n  Error: ${error.message}`)
+					displayFatalError(`Could not send chunk ${currentFileChunkIndex + 1}/${total} of file ${fileIndex + 1}/${files.length} (virtualChunkIndex: ${virtualChunkIndex}) to the relay server.\n  Error: ${error.message}`, spinner)
 				})
 
 				var responseJson
@@ -640,7 +606,7 @@ export default async function () {
 					responseJson = await response.json()
 				} catch (error) {
 					const responseStatusCode = response?.status || "unknown"
-					displayFatalError(`Could not parse the response from the relay server while sending chunk ${currentFileChunkIndex + 1}/${total} of file ${fileIndex + 1}/${files.length} (virtualChunkIndex: ${virtualChunkIndex}).\n  HTTP Code: ${responseStatusCode}\n  Error: ${error.message}`)
+					displayFatalError(`Could not parse the response from the relay server while sending chunk ${currentFileChunkIndex + 1}/${total} of file ${fileIndex + 1}/${files.length} (virtualChunkIndex: ${virtualChunkIndex}).\n  HTTP Code: ${responseStatusCode}\n  Error: ${error.message}`, spinner)
 				}
 				logDebugPerformance(`${file.virtualPath}: Sent chunk ${currentFileChunkIndex + 1}/${total} (virtualChunkIndex: ${virtualChunkIndex}) to relay server`)
 
@@ -677,11 +643,7 @@ export default async function () {
 		spinner.succeed(_updateFilesSendingSpinner())
 
 		// Save debug performances file on disk
-		if (globalThis.debugPerformances === true) {
-			const debugFilePath = path.join(process.cwd(), `fleer_send_debug_performances_${Date.now()}.csv`)
-			await Bun.write(debugFilePath, debugPerformancesCsv)
-			console.log(`Debug performances saved to ${chalk.cyan(debugFilePath)}`)
-		}
+		if (globalThis.debugPerformances === true) await saveDebugPerformances()
 
 		// TODO: then, delete the transfer on the relay server
 		process.exit()

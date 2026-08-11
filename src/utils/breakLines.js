@@ -1,6 +1,6 @@
 import { stripVTControlCharacters as stripAnsi } from "node:util"
 
-export default function(columns = 80, prefix = "", str = "") {
+export default function (columns = 80, prefix = "", str = "") {
 	return str
 		.split("\n")
 		.flatMap(rawLine => {
