@@ -17,6 +17,7 @@ import displayFatalError from "./utils/displayFatalError.js"
 import displayWarning from "./utils/displayWarning.js"
 import checkRelayAccess from "./utils/checkRelayAccess.js"
 import { logDebugPerformance, saveDebugPerformances } from "./utils/debugPerformances.js"
+import checkNonTlsConnection from "./utils/checkNonTlsConnection.js"
 
 var relayServerUrl = "http://192.168.1.174:8080/"
 const CHUNK_SIZE = 5 * 1024 * 1024 // 5 MiB
@@ -222,11 +223,7 @@ export default async function () {
 
 	if(!filesCount) process.exit(1)
 
-	if (relayServerUrl.startsWith("http://")) {
-		displayWarning(`You are using an unencrypted connection to the relay server (${chalk.bold.bgRed.cyan("http://")}${chalk.cyan(stripAnsi(relayServerUrl).replace("http://", ""))}).\n  This is not recommended, as it could expose your data to potential Man-in-the-Middle attacks.\n  If possible, please use a secure connection (https://) to the relay server.`)
-		const shouldContinueHTTP = await askConfirmation("Do you want to continue anyway?")
-		if (!shouldContinueHTTP) return process.exit()
-	}
+	await checkNonTlsConnection(relayServerUrl)
 
 	// Get infos about the relay server
 	logDebugPerformance("---------------")
@@ -345,9 +342,7 @@ export default async function () {
 				? "(Sending too fast, waiting for receiver to catch up...)"
 				: currentSendingProcessId
 					? `(${mbpsEmoji} ${chalk.dim.cyan(mbps.toFixed(2))} MB/s)`
-					: isSendingProcessEnded
-						? "(Stopped)"
-						: "(Starting...)"
+					: "(Starting...)"
 
 		var newText = isSendingProcessEnded
 			? `Sent ${chalk.cyan(intlFormatter.format(currentFilePosition || filesCount || 1))} file${currentFilePosition > 1 ? "s" : ""} and ${chalk.cyan(intlFormatter.format(foldersCount))} folder${foldersCount > 1 ? "s" : ""}.`
