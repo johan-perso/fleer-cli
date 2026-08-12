@@ -1,6 +1,11 @@
 import { stripVTControlCharacters as stripAnsi } from "node:util"
 
-export default function (columns = 80, prefix = "", str = "") {
+export default function (
+	columns = 80,
+	prefix = "",
+	str = "",
+	options = { skipPrefixFirstLine: false },
+) {
 	return str
 		.split("\n")
 		.flatMap(rawLine => {
@@ -27,6 +32,12 @@ export default function (columns = 80, prefix = "", str = "") {
 
 			return lines
 		})
-		.map(line => prefix + line)
+		.map((line, index) => {
+			if (index === 0 && options.skipPrefixFirstLine) {
+				return line
+			}
+
+			return prefix + line
+		})
 		.join("\n")
 }
