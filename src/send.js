@@ -16,7 +16,7 @@ import streamWithProgress from "./utils/streamWithProgress.js"
 import displayFatalError from "./utils/displayFatalError.js"
 import displayWarning from "./utils/displayWarning.js"
 import checkRelayAccess from "./utils/checkRelayAccess.js"
-import { logDebugPerformance, saveDebugPerformances } from "./utils/debugPerformances.js"
+import { logDebugPerformance, saveDebugPerformances, appendSocketDebugEvent } from "./utils/debugPerformances.js"
 import checkNonTlsConnection from "./utils/checkNonTlsConnection.js"
 
 var relayServerUrl = "http://192.168.1.174:8080/"
@@ -335,8 +335,9 @@ export default async function () {
 	var currentChunkSentBytes = 0
 
 	var lastSocketWarning = null
+	var spinnerFailed = false
 	function _updateFilesSendingSpinner() {
-		const sendingStatus = isSendingProcessEnded
+		const sendingStatus = isSendingProcessEnded || isSendingProcessInterrupted
 			? ""
 			: isWaitingForRelayToAllowSending
 				? "(Sending too fast, waiting for receiver to catch up...)"
@@ -354,10 +355,13 @@ export default async function () {
 		}
 		if (lastSocketWarning) newText += `\n${chalk.yellow("⚠")} ${chalk.dim(reduceString.maxLines(lastSocketWarning, 1, 2))}`
 
-		if(isSendingProcessEnded) {
+		if(isSendingProcessEnded && !spinnerFailed) {
 			const totalTime = Math.round((Date.now() - startSendingTime) / 1000)
 			newText += `\n  Took ${chalk.cyan(totalTime > 300 ? `${Math.floor(totalTime / 60)} min ${totalTime % 60} sec` : `${totalTime} sec`)} for ${chalk.cyan(filesize(sentBytesToRelay))}.`
-		} else {
+			newText += `\n  ${chalk.dim("Waiting for receiver to finish downloading...")}`
+		} else if(isSendingProcessInterrupted && !spinnerFailed) {
+			newText += `\n  ${chalk.dim("Transfer was interrupted. Waiting for the receiver to reconnect...")}`
+		} else if(!spinnerFailed) {
 			newText += `\n\n${chalk.dim(`sent ${chalk.cyan(filesize(sentBytesToRelay))} / ${chalk.cyan(filesize(totalSizeBytes))} (${Math.floor((sentBytesToRelay / totalSizeBytes) * 100)}%)`)}`
 			newText += `\n${chalk.dim(`use ${chalk.cyan("Ctrl+C")} to cancel transfer`)}`
 		}
@@ -370,11 +374,18 @@ export default async function () {
 	var isConnectedToShareDisplayedOnce = false
 	spinner.start("Establishing real-time connection to the relay server...")
 	const socket = new WebSocket(`${relayServerUrl.replace("http", "ws")}/shares/updates`)
+	socket.send = ((originalSend) => {
+		return function (data) {
+			appendSocketDebugEvent(`(Sender) 🫸 Sending message to relay: ${JSON.stringify(data)}`)
+			originalSend.call(this, data)
+		}
+	})(socket.send)
 	socket.onopen = () => {
 		socket.send(JSON.stringify({ type: "ConnectToShare", data: { shareId, isSender: true } }))
 	}
-	socket.onmessage = async (event) => {
+	socket.onmessage = async (event) => { // TODO: integrate queue system here
 		const message = JSON.parse(event.data)
+		appendSocketDebugEvent(`(Sender) 🫷 Received message from relay: ${JSON.stringify(event.data)}`)
 
 		switch (message?.type) {
 		case "welcome":
@@ -413,6 +424,7 @@ export default async function () {
 		case "restartTransfer":
 			// As seen in the comment of allowedBytesMaxUpdate handler, the relay keep chunks in cache for a limited time.
 			// If the receiver ask for chunks that got deleted from the relay cache, transfer will have to be restarted from the beginning.
+			spinnerFailed = false
 			currentSendingProcessId = null
 			allowedBytesByRelay = null
 			isWaitingForRelayToAllowSending = false
@@ -434,11 +446,12 @@ export default async function () {
 			lastSocketWarning = "Transfer was interrupted and needs to be restarted."
 			_updateFilesSendingSpinner()
 
-			while (!isSendingProcessInterrupted && !isSendingProcessEnded) {
+			if(!isSendingProcessEnded) while (!isSendingProcessInterrupted) {
 				await new Promise(resolve => setTimeout(resolve, 500))
 			}
+			isSendingProcessEnded = true
 			lastSocketWarning = "Transfer was interrupted and needs to be restarted."
-			spinner.fail(_updateFilesSendingSpinner())
+			_updateFilesSendingSpinner()
 
 			sendFiles()
 			break
@@ -449,12 +462,11 @@ export default async function () {
 		_updateFilesSendingSpinner()
 	}
 	socket.onclose = () => {
-		if(!isSendingProcessEnded) {
-			lastSocketWarning = "Real-time connection to the relay server was closed due to an unknown reason."
-			spinner.fail(_updateFilesSendingSpinner())
-			process.exit(1)
-			// TODO: try to resume, it may be due to a temporary network issue
-		}
+		lastSocketWarning = "Real-time connection to the relay server was closed due to an unknown reason."
+		spinnerFailed = true
+		spinner.fail(_updateFilesSendingSpinner())
+		process.exit(1)
+		// TODO: try to resume, it may be due to a temporary network issue
 	}
 
 	// Calculate the average Mb/s over the last few chunks sent
@@ -501,6 +513,7 @@ export default async function () {
 		const sendingProcessId = Date.now() + Math.floor(Math.random() * 1000000).toString(36)
 		currentSendingProcessId = sendingProcessId
 		isSendingProcessInterrupted = false
+		isSendingProcessEnded = false
 		startSendingTime = Date.now()
 
 		var virtualChunkIndex = 0
@@ -636,13 +649,14 @@ export default async function () {
 		// All files have been sent, we can end the sending process
 		socket.send(JSON.stringify({ type: "LastChunk", data: { index: virtualChunkIndex - 1 } }))
 		isSendingProcessEnded = true
-		spinner.succeed(_updateFilesSendingSpinner())
+		_updateFilesSendingSpinner()
+
+		// TODO: then, delete the transfer on the relay server once we know the receiver downloaded everything
+		// TODO: don't process.exit() here bc we need to stay connected if transfer need to be restarted
+		// TODO: wait for receiver to receive everything before spinner.succeed() and saveDebugPerformances()
 
 		// Save debug performances file on disk
 		if (globalThis.debugPerformances === true) await saveDebugPerformances()
-
-		// TODO: then, delete the transfer on the relay server
-		process.exit()
 	}
 
 	// Method to check if the transfer was not interrupted by another part of the code

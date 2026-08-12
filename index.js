@@ -8,6 +8,7 @@ import packageJson from "./package.json"
 // import receiveFiles from "./src/receive.js"
 import sendFiles from "./src/send.js"
 import breakLines from "./src/utils/breakLines.js"
+import { getDebugSocketFilePath } from "./src/utils/debugPerformances.js"
 
 // Force exit on Ctrl+C
 // process.stdin.on("data", (data) => {
@@ -33,12 +34,14 @@ function showHelp(){
    $ fleer
 
  Commands
-   send             Start sending one or multiple files
-   receive          Start receiving one or multiple files
+   send                  Start sending one or multiple files
+   receive               Start receiving one or multiple files
 
  Options
-   --version -v     Show installed version
-   --help    -h     Show infos on how to use the CLI
+   --version -v          Show installed version
+   --help    -h          Show infos on how to use the CLI
+   --debug-performances  Save debug performances to a CSV file (for development purposes)
+   --debug-socket        Save debug socket events to a text file (for development purposes)
 
  How to send a file?
    $ fleer send <file_path>
@@ -71,6 +74,11 @@ globalThis.defaultArgs = process.argv.slice(2)
 if(defaultArgs.includes("--debug-performances")) {
 	defaultArgs.splice(defaultArgs.indexOf("--debug-performances"), 1)
 	globalThis.debugPerformances = true
+}
+if(defaultArgs.includes("--debug-socket")) {
+	defaultArgs.splice(defaultArgs.indexOf("--debug-socket"), 1)
+	globalThis.debugSocket = true
+	console.log(chalk.yellow(`Debug socket events will be saved to: ${chalk.cyan(getDebugSocketFilePath())}\n`))
 }
 
 if(defaultArgs.includes("version") || defaultArgs.includes("v") || defaultArgs.includes("--version") || defaultArgs.includes("-v")) showVersion()

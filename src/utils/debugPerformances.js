@@ -1,5 +1,7 @@
 import path from "path"
 import chalk from "chalk"
+import { tmpdir } from "os"
+import { writeFile } from "fs/promises"
 
 globalThis.debugPerformancesCsv = "timestamp,timeSinceLast,action"
 globalThis.lastDebugPerformanceTimestamp = Date.now()
@@ -21,7 +23,21 @@ export async function saveDebugPerformances() {
 	console.log(`\n${chalk.green("✔")} Debug performances saved to ${chalk.cyan(debugFilePath)}`)
 }
 
+export function getDebugSocketFilePath() {
+	return path.join(tmpdir(), "fleer_cli_socket.txt")
+}
+
+export async function appendSocketDebugEvent(message) {
+	if (globalThis.debugSocket !== true) return
+
+	const now = new Date().toISOString()
+	await writeFile(getDebugSocketFilePath(), `[${now}] ${message}\n`, { flag: "a" })
+}
+
 export default {
 	logDebugPerformance,
-	saveDebugPerformances
+	saveDebugPerformances,
+
+	getDebugSocketFilePath,
+	appendSocketDebugEvent
 }
