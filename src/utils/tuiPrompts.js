@@ -5,13 +5,22 @@ import reduceString from "./reduceString.js"
 
 async function askConfirmation(question) {
 	const prompt = new enquirer.Confirm({
-		name: "confirmation",
 		message: question,
 		initial: true,
 		prefix: chalk.cyan("?"),
 		format() {
 			return /^[ty1]/i.test(prompt.input) ? "yes" : "no"
 		}
+	})
+
+	return prompt.run()
+}
+
+async function askCustomText(question, { footer } = {}) {
+	const prompt = new enquirer.Input({
+		message: question,
+		prefix: chalk.cyan("?"),
+		footer: footer || null,
 	})
 
 	return prompt.run()
@@ -41,5 +50,6 @@ async function askIgnoreFile(filePath, isFolder = false) {
 
 export {
 	askConfirmation,
+	askCustomText,
 	askIgnoreFile
 }

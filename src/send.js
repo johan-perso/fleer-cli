@@ -74,6 +74,7 @@ export default async function () {
 	let foldersCount = 0
 
 	const spinner = ora("Checking files...").start()
+	globalThis.spinner = spinner
 	let lastVirtualPathForSpinner = null
 	function _updateFilesFoundSpinner(virtualPath, forceDisplayTotalSize = false) {
 		if(virtualPath != null && virtualPath !== "disabled") lastVirtualPathForSpinner = virtualPath
@@ -239,9 +240,9 @@ export default async function () {
 			"Content-Type": "application/json",
 		},
 		body: JSON.stringify({
-			"filesCount": filesCount,
-			"foldersCount": foldersCount,
-			"totalSize": totalSizeBytes
+			filesCount: filesCount,
+			foldersCount: foldersCount,
+			totalSize: totalSizeBytes
 		}),
 	}).catch(error => {
 		displayFatalError(`Could not reach the relay server at ${chalk.cyan(stripAnsi(relayServerUrl))}.\n  Error: ${error.message}`, spinner)
@@ -353,8 +354,6 @@ export default async function () {
 			if (percentage > 100) percentage = 100
 			newText += `\n${chalk.cyan("◉")} ${percentage > 0 && percentage <= 9 ? "0" : ""}${percentage} %   ${chalk.dim(reduceString.maxLines(currentFileDisplayName, 1, 2 + 5 + 3))}`
 		}
-		if (lastSocketWarning) newText += `\n${chalk.yellow("⚠")} ${chalk.dim(reduceString.maxLines(lastSocketWarning, 1, 2))}`
-
 		if(isSendingProcessEnded && !spinnerFailed) {
 			const totalTime = Math.round((Date.now() - startSendingTime) / 1000)
 			newText += `\n  Took ${chalk.cyan(totalTime > 300 ? `${Math.floor(totalTime / 60)} min ${totalTime % 60} sec` : `${totalTime} sec`)} for ${chalk.cyan(filesize(sentBytesToRelay))}.`
@@ -365,6 +364,8 @@ export default async function () {
 			newText += `\n\n${chalk.dim(`sent ${chalk.cyan(filesize(sentBytesToRelay))} / ${chalk.cyan(filesize(totalSizeBytes))} (${Math.floor((sentBytesToRelay / totalSizeBytes) * 100)}%)`)}`
 			newText += `\n${chalk.dim(`use ${chalk.cyan("Ctrl+C")} to cancel transfer`)}`
 		}
+
+		if (lastSocketWarning) newText += `\n${chalk.yellow("⚠")} ${chalk.dim(reduceString.maxLines(lastSocketWarning, 1, 2))}`
 
 		if (spinner.text !== newText) spinner.text = newText
 		return newText
@@ -450,7 +451,7 @@ export default async function () {
 				await new Promise(resolve => setTimeout(resolve, 500))
 			}
 			isSendingProcessEnded = true
-			lastSocketWarning = "Transfer was interrupted and needs to be restarted."
+			lastSocketWarning = "Transfer was interrupted and had to be restarted."
 			_updateFilesSendingSpinner()
 
 			sendFiles()
@@ -517,7 +518,6 @@ export default async function () {
 		startSendingTime = Date.now()
 
 		var virtualChunkIndex = 0
-		lastSocketWarning = null
 
 		// Loop through every file and send them chunk by chunk to the relay server, which will then be sent to the receiver
 		logDebugPerformance("---------------")
@@ -647,7 +647,7 @@ export default async function () {
 		}
 
 		// All files have been sent, we can end the sending process
-		socket.send(JSON.stringify({ type: "LastChunk", data: { index: virtualChunkIndex - 1 } }))
+		socket.send(JSON.stringify({ type: "LastChunk", data: { lastChunkId: virtualChunkIndex - 1 } }))
 		isSendingProcessEnded = true
 		_updateFilesSendingSpinner()
 

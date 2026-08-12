@@ -10,17 +10,36 @@ import sendFiles from "./src/send.js"
 import breakLines from "./src/utils/breakLines.js"
 import { getDebugSocketFilePath } from "./src/utils/debugPerformances.js"
 
+process.on("SIGINT", () => cliCleanup(true))
+process.on("exit", () => cliCleanup())
+
 // Force exit on Ctrl+C
-// process.stdin.on("data", (data) => {
-// 	if (data.toString() === "\x03") cliCleanup()
-// })
-process.on("SIGINT", cliCleanup)
-process.on("exit", cliCleanup)
-function cliCleanup() {
+process.stdin.setRawMode(true)
+process.stdin.resume()
+process.stdin.on("data", (data) => {
+	const key = data.toString("utf-8")
+	if (key === "\u0003" || data.toString() === "\x03") { // ctrl+c
+		cliCleanup(true)
+	} else {
+		process.stdout.write(key)
+	}
+})
+
+var isCleaningUp = false
+async function cliCleanup(isUserInitiated = false) {
+	if(isCleaningUp) return
+	isCleaningUp = true
+
 	if (process.stdin.isTTY) {
 		process.stdin.setRawMode(false) // put back the terminal in normal mode (in case 'ora' spinner is running)
 	}
 	process.stdin.pause()
+
+	if(isUserInitiated && globalThis?.spinner && globalThis.spinner.isSpinning) {
+		globalThis.spinner.text = `${globalThis.spinner.text}\n\n${chalk.red("✖")} Cancelled by user (Ctrl+C)`
+		globalThis.spinner.fail()
+	}
+
 	process.exit(130) // 130 = signal code for SIGINT (Ctrl+C)
 }
 
