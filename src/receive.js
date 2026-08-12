@@ -1,0 +1,529 @@
+import chalk from "chalk"
+import ora from "ora"
+import { filesize } from "filesize"
+import path from "node:path"
+import { mkdir, exists } from "node:fs/promises"
+import { stripVTControlCharacters as stripAnsi } from "node:util"
+
+import getAbsoluteLowest from "./utils/absoluteLowest.js"
+import reduceString from "./utils/reduceString.js"
+import doubleCheckPaths from "./utils/doubleCheckPaths.js"
+import encryption from "./utils/encryption.js"
+import getDeviceName from "./utils/getDeviceName.js"
+import { askConfirmation, askIgnoreFile, askCustomText } from "./utils/tuiPrompts.js"
+import streamWithProgress from "./utils/streamWithProgress.js"
+import displayFatalError from "./utils/displayFatalError.js"
+import displayWarning from "./utils/displayWarning.js"
+import checkRelayAccess from "./utils/checkRelayAccess.js"
+import { logDebugPerformance, saveDebugPerformances, appendSocketDebugEvent } from "./utils/debugPerformances.js"
+import checkNonTlsConnection from "./utils/checkNonTlsConnection.js"
+
+const supportedProtocolVersions = [1]
+const maxErrorsCount = 20
+
+const intlFormatter = new Intl.NumberFormat()
+
+// const ignoredPaths = []
+// var autoIgnoreDoubleCheckPaths = false
+// var disableAskingDoubleCheckPaths = false
+
+export default async function () {
+	async function askManualDetails() {
+		const relayUrl = await askCustomText("Please provide relay server URL", { footer: "e.g. https://server.fleer.app" })
+		if(!relayUrl || !relayUrl?.trim()?.length) return displayFatalError("No relay server URL provided. Please provide a valid relay server URL to continue.")
+		if(!relayUrl.startsWith("http://") && !relayUrl.startsWith("https://")) return displayFatalError("Invalid relay server URL provided. Please provide a valid relay server URL starting with https:// to continue.")
+
+		const shareKey = await askCustomText("Please provide Share Key", { footer: "Approx. 9 letters, given by the sender" })
+		if(!shareKey || !shareKey?.trim()?.length) return displayFatalError("No Share Key provided. Please provide a valid one to continue.")
+
+		const encryptionKey = await askCustomText("Please provide Encryption Key", { footer: "Approx. 18 characters, starting with a number followed by a dot, given by the sender" })
+		if(!encryptionKey || !encryptionKey?.trim()?.length) return displayFatalError("No Encryption Key provided. Please provide a valid one to continue.")
+
+		return { relayUrl, shareKey, encryptionKey }
+	}
+
+	var relayUrl, shareKey, encryptionKey = null
+
+	// Get the download URL
+	const downloadUrlStr = globalThis.defaultArgs.slice(1)
+	if (downloadUrlStr.length === 0) {
+		displayFatalError(`No download URL provided.\nCancel using ${chalk.cyan("Ctrl+C")} and use ${chalk.cyan("fleer download <download_url>")} or fill out the following prompts.\nTo display more information about how Fleer works, use ${chalk.cyan("fleer help-download")}.\n\n`)
+		const manualDetails = await askManualDetails()
+		relayUrl = manualDetails.relayUrl
+		shareKey = manualDetails.shareKey
+		encryptionKey = manualDetails.encryptionKey
+	}
+
+	// Automatically parse the download URL
+	if (downloadUrlStr && (!relayUrl || !shareKey || !encryptionKey)) {
+		try {
+			const downloadUrl = new URL(downloadUrlStr)
+			relayUrl = downloadUrl?.origin
+			shareKey = downloadUrl?.pathname?.split("/d/")?.[1]
+			encryptionKey = downloadUrl?.hash?.split("#")?.[1]
+		} catch (error) {
+			displayFatalError(`Invalid download URL provided.\nTo display more information about how Fleer works, use ${chalk.cyan("fleer help-download")}.`, null)
+		}
+	}
+
+	// Guess the encryption protocol indicator from the first sequence of the encryption key (before the first dot)
+	const encryptionProtocolIndicator = encryptionKey?.split(".")?.[0]
+	if(!encryptionProtocolIndicator) return displayFatalError("Could not determine any encryption protocol indicator from the encryption key. Please provide a valid encryption key to continue.")
+	if(isNaN(parseInt(encryptionProtocolIndicator))) return displayFatalError("Could not determine a valid encryption protocol indicator from the encryption key. Please provide a valid encryption key to continue.")
+	encryptionKey = encryptionKey?.split(".")?.slice(1)?.join(".")
+
+	if (!encryption.ENCRYPTION_PROTOCOLS?.[encryptionProtocolIndicator]) {
+		return displayFatalError(`The encryption protocol used by the sender (${chalk.cyan(encryptionProtocolIndicator)}) is not supported by this client.\nSupported protocols: ${Object.keys(encryption.ENCRYPTION_PROTOCOLS).map(p => chalk.cyan(p)).join(", ")}.`)
+	}
+
+	// Check if all required parameters are present
+	if (!relayUrl) return displayFatalError("Relay server URL missing. Please provide a valid relay server URL to continue.")
+	if (!shareKey) return displayFatalError("Share Key missing. Please provide a valid one to continue.")
+	if (!encryptionKey) return displayFatalError("Encryption Key missing. Please provide a valid one to continue.")
+
+	await checkNonTlsConnection(relayUrl)
+
+	// Check if the relay server is reachable
+	const spinner = ora("Checking relay server...").start()
+	globalThis.spinner = spinner
+	while(relayUrl.endsWith("/")) relayUrl = relayUrl.slice(0, -1)
+	await checkRelayAccess({
+		relayUrl: relayUrl,
+		spinner,
+		logDebugPerformance,
+		supportedProtocolVersions
+	})
+
+	// Get transfer details from the relay server
+	spinner.start("Retrieving transfer details...")
+	const shareDetails = await fetch(`${relayUrl}/shares/read`, {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+		},
+		body: JSON.stringify({
+			"shareId": shareKey
+		}),
+	}).catch(error => {
+		displayFatalError(`Could not reach the relay server at ${chalk.cyan(stripAnsi(relayUrl))}.\nError: ${error.message}`, spinner)
+	})
+
+	var shareDetailsJson
+	try {
+		shareDetailsJson = await shareDetails.json()
+	} catch (error) {
+		const responseStatusCode = shareDetails?.status || "unknown"
+		displayFatalError(`Could not parse the response from the relay server.\nHTTP Code: ${responseStatusCode}\nError: ${error.message}`, spinner)
+	}
+	if(shareDetailsJson?.error) {
+		const statusCode = shareDetails?.status
+		if(statusCode == 404) {
+			displayFatalError(`No transfer associated to this Share Key was found on the relay server.\nShare Key: ${chalk.cyan(shareKey)}\nRelay URL: ${chalk.cyan(relayUrl)}`, spinner)
+		} else {
+			displayFatalError(`Relay server threw an error (${chalk.dim(stripAnsi(shareCreationJson?.data?.error || shareCreationJson?.error))}):\n${stripAnsi(shareDetailsJson?.data?.message || shareDetailsJson?.message || JSON.stringify(shareDetailsJson))}`, spinner)
+		}
+	}
+	lastChunkId = shareDetailsJson?.data?.lastChunkId || null
+	spinner.succeed(`Found transfer. ${chalk.dim(`(${intlFormatter.format(shareDetailsJson?.data?.filesCount || 0)} file${shareDetailsJson?.data?.filesCount > 1 ? "s" : ""} for ${filesize(shareDetailsJson?.data?.totalSize || 0)})`)}`)
+
+	spinner.start("Testing encryption key...")
+	const primaryDetailsEncrypted = shareDetailsJson?.data?.primaryDetails
+	if (!primaryDetailsEncrypted) {
+		displayFatalError("Could not find the primary details in the transfer data. The transfer might be incomplete or corrupted.", spinner)
+		return
+	}
+
+	// Decrypt primary details to access more details about the transfer
+	var cipher, primaryDetails = null
+	try {
+		cipher = await encryption.ShareCipher.fromShortKey({ shareId: shareKey, protocolIndicator: encryptionProtocolIndicator, shortKey: encryptionKey })
+		primaryDetails = await cipher.decryptJson(primaryDetailsEncrypted, "primary")
+	} catch (error) {
+		const isInvalidKeyError = error?.message?.includes("Invalid key") || error?.message?.includes("The operation failed for an operation-specific reason")
+		displayFatalError(`Could not decrypt the primary details with the provided encryption key.${isInvalidKeyError ? "\nThis might happen if the encryption key is incorrect." : ""}\n  Error: ${error?.message || error?.stack}`, spinner)
+	}
+	if (!primaryDetails || typeof primaryDetails !== "object") {
+		displayFatalError("Decrypted primary details successfully, but didn't find valid data.\nThe encryption key might be incorrect, or the sender might have sent corrupted data.", spinner)
+	}
+	var senderDeviceName = primaryDetails?.deviceName?.trim() || "Sender's device"
+	senderDeviceName = senderDeviceName.length > 1 && senderDeviceName.length < 65 ? stripAnsi(senderDeviceName) : "Sender's device"
+	spinner.succeed("Encryption key is valid.")
+
+	// Initialize a few (many 💀) variables for the files downloading process
+	var filesCount = shareDetailsJson?.data?.filesCount || 0
+	// var foldersCount = shareDetailsJson?.data?.foldersCount || 0 // TODO
+	var totalSizeBytes = shareDetailsJson?.data?.totalSize || 0
+	var lastReceivedChunkIndex = -1
+
+	const saveDirectory = "./received_files" // TODO: place in ~/Downloads on macOS if folder exists, similar on Windows, in other case (linux or non-existing folders) ~/FleerDownloads
+	if (!await exists(saveDirectory)) await mkdir(saveDirectory, { recursive: true })
+
+	let writingChunks = {}
+	const fileChunksCorrelationTable = []
+
+	var lastEventType = null
+	var lastEventCount = 0
+
+	var lastChunkId = null
+	var isDownloadingProcessEnded = false
+	var startDownloadingTime = null
+	var isSenderDisconnected = false
+
+	var receivedBytesFromRelay = 0
+	var isProcessingChunk = false
+	var mbps = null
+	var mbpsEmoji = "📈"
+
+	var currentFileDisplayName = null
+	var currentFilePosition = 1
+	var currentFileSize = 0
+	var currentFileDownloadingBytes = 0
+
+	var lastSocketWarning = null
+	function _updateFilesDownloadingSpinner() {
+		const downloadingStatus = isDownloadingProcessEnded
+			? ""
+			: mbpsEmoji.length && mbps != null
+				? `(${mbpsEmoji} ${chalk.dim.cyan(mbps.toFixed(2))} MB/s)`
+				: "(Starting...)"
+
+		var newText = isDownloadingProcessEnded
+			? "" // `Sent ${chalk.cyan(intlFormatter.format(currentFilePosition || filesCount || 1))} file${currentFilePosition > 1 ? "s" : ""} and ${chalk.cyan(intlFormatter.format(foldersCount))} folder${foldersCount > 1 ? "s" : ""}.`
+			: `Downloading file ${chalk.cyan(intlFormatter.format(currentFilePosition || 1))} / ${chalk.cyan(intlFormatter.format(filesCount))} ${chalk.dim(downloadingStatus)}`
+		if (currentFileDisplayName && !isDownloadingProcessEnded) {
+			var percentage = currentFileSize > 0 ? Math.floor((currentFileDownloadingBytes / currentFileSize) * 100) : 0
+			if (percentage > 100) percentage = 100
+			newText += `\n${chalk.cyan("◉")} ${percentage > 0 && percentage <= 9 ? "0" : ""}${percentage} %   ${chalk.dim(reduceString.maxLines(currentFileDisplayName, 1, 2 + 5 + 3))}`
+		}
+
+		if(isDownloadingProcessEnded) {
+			const totalTime = Math.round((Date.now() - startDownloadingTime) / 1000)
+			newText += `\n  Took ${chalk.cyan(totalTime > 300 ? `${Math.floor(totalTime / 60)} min ${totalTime % 60} sec` : `${totalTime} sec`)} for ${chalk.cyan(filesize(receivedBytesFromRelay))}.`
+		} else {
+			var totalPercentage = totalSizeBytes > 0 ? Math.floor((receivedBytesFromRelay / totalSizeBytes) * 100) : 0
+			if (totalPercentage > 99.9) totalPercentage = 100
+
+			newText += `\n\n${chalk.dim(`received ${chalk.cyan(filesize(receivedBytesFromRelay))} / ${chalk.cyan(filesize(totalSizeBytes))} (${totalPercentage}%) from ${chalk.cyan(senderDeviceName)}`)}`
+			newText += `\n${chalk.dim(`use ${chalk.cyan("Ctrl+C")} to cancel download`)}`
+		}
+
+		if (lastSocketWarning) newText += `\n${chalk.yellow("⚠")} ${chalk.dim(reduceString.maxLines(lastSocketWarning, 1, 5))}`
+		if (isSenderDisconnected) newText += `\n${chalk.yellow("⚠")} ${chalk.dim(reduceString.maxLines("Sender seems to be disconnected.", 1, 5))}`
+
+		if (spinner.text !== newText) spinner.text = newText
+		return newText
+	}
+
+	// Method to handle incoming JSON WebSocket messages
+	async function handleJsonSocketMessage(message) {
+		// Avoid spamming the console if server keep sending the same msg
+		if (lastEventType === message?.type) {
+			lastEventCount++
+			if (lastEventCount > 10) {
+				lastSocketWarning = `Received ${lastEventCount} consecutive messages of type: ${stripAnsi(message?.type)}. Slowing down the processing...`
+				await new Promise(resolve => setTimeout(resolve, (lastEventCount * 100) > 10_000 ? 10_000 : lastEventCount * 100)) // wait a bit to avoid spamming the console
+			}
+		} else {
+			lastEventCount = 1
+			lastEventType = message?.type
+		}
+
+		switch (message?.type) {
+		case "welcome":
+			spinner.text = `Establishing real-time connection to the relay server... ${chalk.dim("(Connected)")}`
+			break
+		case "error": // connection is not closed, act as a warning
+			lastSocketWarning = stripAnsi(`${message?.data?.error || message?.error} - ${message?.data?.message || message?.message || JSON.stringify(message)}`)
+			_updateFilesDownloadingSpinner()
+			break
+		case "fatal": // connection is closed afterwards
+			displayFatalError(`Relay server threw an error (${chalk.dim(stripAnsi(message?.data?.error || message?.error))}):\n${stripAnsi(message?.data?.message || message?.message || JSON.stringify(message))}.`, spinner)
+			break
+		case "connectedToShare":
+			if(!isConnectedToShareDisplayedOnce) spinner.succeed("Real-time connection established.")
+			isConnectedToShareDisplayedOnce = true
+
+			isSenderDisconnected = !(message?.data?.isSenderConnected || false)
+
+			const confirmStartDownload = await askConfirmation("Do you want to start downloading the files now?")
+			if(!confirmStartDownload) {
+				spinner.fail("Download cancelled by user.")
+				process.exit(0)
+			}
+			process.stdout.moveCursor(0, -1)
+			process.stdout.clearLine(1)
+
+			startDownloadingTime = Date.now()
+			console.log() // line break
+			spinner.start(_updateFilesDownloadingSpinner())
+
+			socket.send(JSON.stringify({ type: "GetPrecedentsChunks", data: { fromChunkId: 0, untilChunkId: 3 } })) // max 3 chunks at a time
+			break
+		case "precedentsChunksUpdate":
+			// console.log(`Server says there are ${message.data.remaining} chunks remaining to be sent to us.`)
+			if (message.data.remaining > 0) {
+				// console.log("Asking server for more chunks...")
+				// console.log(`asking chunks until ${lastReceivedChunkIndex + 4} (last received: ${lastReceivedChunkIndex})`)
+				socket.send(JSON.stringify({ type: "GetPrecedentsChunks", data: { fromChunkId: lastReceivedChunkIndex + 1, untilChunkId: lastReceivedChunkIndex + 4 } })) // still asking for max 3 chunks at a time
+			} else {
+				// console.log("All chunks that have been sent to the server before we connected have been received.")
+			// The server will automatically send us new chunks as they are sent to the server, as soon as we acknowledge what we just got here
+			}
+			break
+		case "msgFromSender":
+			const unencryptedMessage = await cipher.decryptJson(message.data)
+
+			if(unencryptedMessage?.dataType == "FileChunks") registerChunkForFile(unencryptedMessage)
+			break
+		case "lastChunkIndicated":
+			lastChunkId = message?.data?.lastChunkId
+			break
+		case "warning":
+			if(message?.data?.error == "sender_disconnected") {
+				isSenderDisconnected = true
+				if (spinner.isSpinning) _updateFilesDownloadingSpinner()
+			}
+			break
+		case "restartTransfer":
+			acknowledgeQueue.length = 0
+			socketQueue.queue.length = 0
+
+			// If we are currently saving a chunk file, we need to wait for it to finish to avoid corruption
+			if(isProcessingChunk) while (isProcessingChunk) {
+				await new Promise(resolve => setTimeout(resolve, 500))
+			}
+
+			currentFilePosition = 1
+			lastReceivedChunkIndex = -1
+			receivedBytesFromRelay = 0
+			startDownloadingTime = null
+			lastChunkId = null
+
+			currentFileDownloadingBytes = 0
+			currentFileDisplayName = null
+			currentFilePosition = 1
+			currentFileSize = 0
+
+			mbps = 0
+			mbpsEmoji = "📈"
+			// mbpsHistory.length = 0 // TODO: display downloading speed
+
+			writingChunks = {}
+			fileChunksCorrelationTable.length = 0
+
+			lastSocketWarning = "Transfer was interrupted and had to be restarted."
+			_updateFilesDownloadingSpinner()
+		}
+	}
+
+	// Method to handle incoming WebSocket messages (binary or JSON)
+	async function handleSocketEvent(event) {
+		await appendSocketDebugEvent(`(Receiver) 🫷 Received message from relay: ${JSON.stringify(event.data)}`)
+
+		// Handle JSON encoded messages
+		if (typeof event.data === "string") {
+			const message = JSON.parse(event.data)
+			await handleJsonSocketMessage(message)
+			return
+		}
+
+		// Handle binary data (such as chunks)
+		isProcessingChunk = true
+		const view = new DataView(event.data)
+		const frameType = view.getUint8(0) // 1st byte indicates the frame type (0 = file chunk)
+		if (frameType !== 0) {
+			displayFatalError(`Relay server sent an unknown binary frame via WebSocket.\nThis is likely due to a misconfiguration or an unsupported relay server, and the transfer cannot continue on this client.\nPlease contact the relay server administrator for further assistance.\n${chalk.dim(`frameType: ${chalk.cyan(frameType)} ; receivedBytesFromRelay: ${chalk.cyan(receivedBytesFromRelay)} ; totalSizeBytes: ${chalk.cyan(totalSizeBytes)}`)}`, spinner)
+			process.exit(1)
+		}
+
+		const index = view.getUint32(1, false) // 2nd to 5th bytes indicate the chunk index (big-endian)
+		lastReceivedChunkIndex = index
+		// const t0 = performance.now()
+		const payload = new Uint8Array(event.data, 5) // The rest is the chunk payload
+
+		// TODO: debug performances
+		// console.log(`Decrypting chunk ${index}, size: ${payload.length} bytes`)
+		// const t1 = performance.now()
+		// Decrypt, and save this chunk to the correct file
+		const plain = await cipher.decryptChunk(payload, index)
+		// console.log(`Decrypted chunk ${index}, size: ${plain.length} bytes`)
+
+		// const t2 = performance.now()
+		const fileForChunk = getFileForChunk(index)
+		// console.log(`Chunk ${index} belongs to file: ${fileForChunk ? fileForChunk.path : "unknown"}`)
+		if (!fileForChunk) {
+			displayFatalError(`Could not find any file associated to chunk ${chalk.cyan(`#${index}`)}.\nThis is likely due to a problem with the sender client that didn't told us about this chunk, or the relay server that didn't forwarded the correct information.`, spinner)
+			process.exit(1)
+		} else {
+			const savePath = path.join(saveDirectory, fileForChunk.path)
+			// TODO: path traversal detection, to avoid writing outside of the saveDirectory
+			if (!savePath) {
+				displayFatalError(`Could not determine a valid save path for chunk ${chalk.cyan(`#${index}`)}.\nThis is likely due to a problem with the sender client that didn't told us about this chunk, or the relay server that didn't forwarded the correct information.`, spinner)
+				process.exit(1)
+			}
+			if (!await exists(path.dirname(savePath))) await mkdir(path.dirname(savePath), { recursive: true })
+
+			try {
+				if(!writingChunks[fileForChunk.path]) {
+					currentFileDownloadingBytes = 0
+					writingChunks[fileForChunk.path] = await Bun.file(savePath, { create: true }).writer({ highWaterMark: 100 * 1024 * 1024 })
+				}
+
+				currentFileSize = fileForChunk.size
+				currentFileDisplayName = fileForChunk.name
+				_updateFilesDownloadingSpinner()
+
+				await writingChunks[fileForChunk.path].write(plain)
+
+				receivedBytesFromRelay += plain.length
+				currentFileDownloadingBytes += plain.length
+				_updateFilesDownloadingSpinner()
+			} catch (error) {
+				displayFatalError(`Could not write chunk ${chalk.cyan(`#${index}`)} to "${chalk.cyan(savePath)}".\nThis is likely due to a problem with the local file system or permissions.\nError: ${error?.message || error?.stack}`, spinner)
+				process.exit(1)
+			}
+		}
+		// const t3 = performance.now()
+
+		// console.log(`chunk ${index}: read ${(t1 - t0).toFixed(1)}ms | ` + `decrypt ${(t2 - t1).toFixed(1)}ms | write ${(t3 - t2).toFixed(1)}ms`,)
+
+		// If we finished processing the last file, end its associated file stream writer to free up memory
+		if (writingChunks.length >= 2) for (const name in writingChunks) {
+			if (name == fileForChunk.path) continue
+			await writingChunks[name].end()
+			delete writingChunks[name]
+		}
+
+		if (lastChunkId != null && lastChunkId != 0 && lastReceivedChunkIndex >= lastChunkId) {
+			spinner.stop()
+
+			// TODO
+			console.log("!! FINISHED !! FINISHED !! FINISHED !! FINISHED !! FINISHED !! FINISHED !! FINISHED !!")
+			console.log("!! FINISHED !! FINISHED !! FINISHED !! FINISHED !! FINISHED !! FINISHED !! FINISHED !!")
+			console.log(`lastChunkId: ${lastChunkId} ; lastReceivedChunkIndex: ${lastReceivedChunkIndex}`)
+			console.log(`lastChunkId: ${lastChunkId} ; lastReceivedChunkIndex: ${lastReceivedChunkIndex}`)
+			console.log(`lastChunkId: ${lastChunkId} ; lastReceivedChunkIndex: ${lastReceivedChunkIndex}`)
+			console.log("!! FINISHED !! FINISHED !! FINISHED !! FINISHED !! FINISHED !! FINISHED !! FINISHED !!")
+			console.log("!! FINISHED !! FINISHED !! FINISHED !! FINISHED !! FINISHED !! FINISHED !! FINISHED !!")
+		}
+
+		acknowledgeChunks(index)
+		isProcessingChunk = false
+	}
+
+	// Sender is sending FileChunks encrypted messages to tell us which chunk belongs to which file, so we can write the decrypted chunk to the correct file
+	function registerChunkForFile(socketMessage) {
+		const existing = fileChunksCorrelationTable.find(r => r.from === socketMessage.from)
+		if (existing) return // already registered
+		fileChunksCorrelationTable.push({ from: socketMessage.from, name: socketMessage.name, size: socketMessage.size, path: socketMessage.path })
+		fileChunksCorrelationTable.sort((a, b) => a.from - b.from) // keep the list sorted by 'from' index
+
+		// The sender is free to send us more files than what was initially told to us
+		if (fileChunksCorrelationTable.length > filesCount) {
+			filesCount = fileChunksCorrelationTable.length
+			_updateFilesDownloadingSpinner()
+		}
+	}
+	function getFileForChunk(index) {
+		let match = null
+		for (const r of fileChunksCorrelationTable) {
+			if (r.from <= index) match = r
+			else break // list is ordered, so we can stop searching once we find a range that starts after the index
+		}
+		return match // null if no match found, or the last matching range if found
+	}
+
+	// Connect to the relay server via WebSocket
+	var isConnectedToShareDisplayedOnce = false
+	const socketQueue = new SocketQueue({ handleEvent: handleSocketEvent })
+
+	spinner.start("Establishing real-time connection to the relay server...")
+	const socket = new WebSocket(`${relayUrl.replace("http", "ws")}/shares/updates`)
+	socket.binaryType = "arraybuffer" // handle binary data as ArrayBuffer
+	socket.send = ((originalSend) => {
+		return function (data) {
+			appendSocketDebugEvent(`(Receiver) 🫸 Sending message to relay: ${JSON.stringify(data)}`)
+			originalSend.call(this, data)
+		}
+	})(socket.send)
+	socket.onopen = () => {
+		socket.send(JSON.stringify({ type: "ConnectToShare", data: { shareId: shareKey, isSender: false, deviceName: getDeviceName() } }))
+	}
+	socket.onmessage = (event) => {
+		socketQueue.enqueue(event)
+	}
+	socket.onerror = (error) => {
+		lastSocketWarning = `${error?.message || `Unknown WebSocket error${error?.code ? ` (${error.code})` : ""}`}`
+		_updateFilesDownloadingSpinner()
+	}
+	socket.onclose = (event) => {
+		if(!isDownloadingProcessEnded) {
+			const reason = event?.reason
+			lastSocketWarning = `Real-time connection to the relay server was closed ${reason ? `(${reason})` : "due to an unknown reason"}.`
+			spinner.fail(_updateFilesDownloadingSpinner())
+			process.exit(1)
+			// TODO: try to resume, it may be due to a temporary network issue
+		}
+	}
+
+	// Methods to acknowledge received chunks to the relay server, this allows the relay server to send us more chunks
+	var acknowledgeQueue = []
+	var acknowledgeTimeout = null
+	var lastAcknowledgeTime = 0
+	function acknowledgeChunks(chunkId) {
+		acknowledgeQueue.push(chunkId)
+
+		// If the last acknowledge was sent less than 300ms ago, we can afford to wait a bit before sending the next one.
+		// Without this, we could end up having a large queue that keep growing and never get sent.
+		if(acknowledgeTimeout && Date.now() - lastAcknowledgeTime < 300) {
+			clearTimeout(acknowledgeTimeout)
+		}
+
+		acknowledgeTimeout = setTimeout(() => {
+			const chunksToAcknowledge = [...acknowledgeQueue]
+			acknowledgeQueue = []
+			if (chunksToAcknowledge.length === 0) return
+
+			socket.send(JSON.stringify({ type: "AcknowledgeChunks", data: { chunkIds: chunksToAcknowledge } }))
+			lastAcknowledgeTime = Date.now()
+		}, 100) // Acknowledge every 100ms
+	}
+}
+
+class SocketQueue {
+	constructor(options = {}) {
+		if (!options.handleEvent || typeof options.handleEvent !== "function") {
+			throw new Error("SocketQueue requires a handleEvent function in options.")
+		}
+
+		this.queue = []
+		this.isProcessing = false,
+		this.handleEvent = options.handleEvent
+	}
+
+	enqueue(message) {
+		if(message?.data instanceof Object && message.data?.highPriority) {
+			this.queue.unshift(message) // add to the front of the queue for high priority messages
+		} else {
+			this.queue.push(message) // add to the end of the queue for normal messages
+		}
+
+		this.processQueue()
+	}
+
+	async processQueue() {
+		if (this.isProcessing) return
+		this.isProcessing = true
+
+		while (this.queue.length > 0) {
+			const event = this.queue.shift()
+			try {
+				await this.handleEvent(event)
+			} catch (error) {
+				console.error("Error processing an event from the queue:", error)
+			}
+		}
+
+		this.isProcessing = false
+	}
+}

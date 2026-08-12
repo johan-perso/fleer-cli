@@ -5,8 +5,8 @@ import chalk from "chalk"
 import updateNotifier from "update-notifier"
 import packageJson from "./package.json"
 
-// import receiveFiles from "./src/receive.js"
 import sendFiles from "./src/send.js"
+import receiveFiles from "./src/receive.js"
 import breakLines from "./src/utils/breakLines.js"
 import { getDebugSocketFilePath } from "./src/utils/debugPerformances.js"
 
@@ -104,7 +104,7 @@ if(defaultArgs.includes("version") || defaultArgs.includes("v") || defaultArgs.i
 else if(defaultArgs.includes("help") || defaultArgs.includes("h") || defaultArgs.includes("--help") || defaultArgs.includes("-h")) showHelp()
 else if(defaultArgs.includes("help-download") || defaultArgs.includes("--help-download")) showDownloadHelp()
 else if(defaultArgs.includes("send") || defaultArgs.includes("s") || defaultArgs.includes("upload") || defaultArgs.includes("u")) checkUpdate() && sendFiles()
-else if(defaultArgs.includes("receive") || defaultArgs.includes("r") || defaultArgs.includes("download") || defaultArgs.includes("d")) checkUpdate() && sendFiles() // receiveFiles
+else if(defaultArgs.includes("receive") || defaultArgs.includes("r") || defaultArgs.includes("download") || defaultArgs.includes("d")) checkUpdate() && receiveFiles()
 else {
 	console.log(`Unknown command.\nUse ${chalk.cyan("fleer --help")} to see the list of available commands.`)
 	process.exit(1)
