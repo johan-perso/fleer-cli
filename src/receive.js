@@ -278,11 +278,9 @@ export default async function () {
 		case "lastChunkIndicated":
 			lastChunkId = message?.data?.lastChunkId
 			break
-		case "warning":
-			if(message?.data?.error == "sender_disconnected") {
-				isSenderDisconnected = true
-				if (spinner.isSpinning) _updateFilesDownloadingSpinner()
-			}
+		case "senderStatus":
+			isSenderDisconnected = !(message?.data?.connected || false)
+			if (spinner.isSpinning) _updateFilesDownloadingSpinner()
 			break
 		case "restartTransfer":
 			acknowledgeQueue.length = 0
