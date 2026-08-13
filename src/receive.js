@@ -96,6 +96,7 @@ export default async function () {
 
 	// Get transfer details from the relay server
 	spinner.start("Retrieving transfer details...")
+	logDebugPerformance("shareDetails...")
 	const shareDetails = await fetch(`${relayUrl}/shares/read`, {
 		method: "POST",
 		headers: {
@@ -115,6 +116,7 @@ export default async function () {
 		const responseStatusCode = shareDetails?.status || "unknown"
 		displayFatalError(`Could not parse the response from the relay server.\nHTTP Code: ${responseStatusCode}\nError: ${error.message}`, spinner)
 	}
+	logDebugPerformance("shareDetails!")
 	if(shareDetailsJson?.error) {
 		const statusCode = shareDetails?.status
 		if(statusCode == 404) {
@@ -136,8 +138,11 @@ export default async function () {
 	// Decrypt primary details to access more details about the transfer
 	var cipher, primaryDetails = null
 	try {
+		logDebugPerformance("Creating a cipher instance...")
 		cipher = await encryption.ShareCipher.fromShortKey({ shareId: shareKey, protocolIndicator: encryptionProtocolIndicator, shortKey: encryptionKey })
+		logDebugPerformance("Decrypting primary details...")
 		primaryDetails = await cipher.decryptJson(primaryDetailsEncrypted, "primary")
+		logDebugPerformance("Decrypted primary details successfully.")
 	} catch (error) {
 		const isInvalidKeyError = error?.message?.includes("Invalid key") || error?.message?.includes("The operation failed for an operation-specific reason")
 		displayFatalError(`Could not decrypt the primary details with the provided encryption key.${isInvalidKeyError ? "\nThis might happen if the encryption key is incorrect." : ""}\n  Error: ${error?.message || error?.stack}`, spinner)
@@ -257,6 +262,7 @@ export default async function () {
 			console.log() // line break
 			spinner.start(_updateFilesDownloadingSpinner())
 
+			logDebugPerformance("Asking server to send us the first chunks...")
 			socket.send(JSON.stringify({ type: "GetPrecedentsChunks", data: { fromChunkId: 0, untilChunkId: 3 } })) // max 3 chunks at a time
 			break
 		case "precedentsChunksUpdate":
@@ -327,6 +333,7 @@ export default async function () {
 
 		// Handle binary data (such as chunks)
 		isProcessingChunk = true
+		logDebugPerformance("Received a binary chunk from relay server, analyzing it...")
 		const view = new DataView(event.data)
 		const frameType = view.getUint8(0) // 1st byte indicates the frame type (0 = file chunk)
 		if (frameType !== 0) {
@@ -336,15 +343,12 @@ export default async function () {
 
 		const index = view.getUint32(1, false) // 2nd to 5th bytes indicate the chunk index (big-endian)
 		lastReceivedChunkIndex = index
-		// const t0 = performance.now()
 		const payload = new Uint8Array(event.data, 5) // The rest is the chunk payload
 
-		// TODO: debug performances
-		// console.log(`Decrypting chunk ${index}, size: ${payload.length} bytes`)
-		// const t1 = performance.now()
 		// Decrypt, and save this chunk to the correct file
+		logDebugPerformance(`Decrypting chunk ${index} (size before decryption: ${payload.length} bytes)`)
 		const plain = await cipher.decryptChunk(payload, index)
-		// console.log(`Decrypted chunk ${index}, size: ${plain.length} bytes`)
+		logDebugPerformance(`Decrypted chunk ${index} (size after decryption: ${plain.length} bytes)`)
 
 		// const t2 = performance.now()
 		const fileForChunk = getFileForChunk(index)
@@ -359,11 +363,12 @@ export default async function () {
 				displayFatalError(`Could not determine a valid save path for chunk ${chalk.cyan(`#${index}`)}.\nThis is likely due to a problem with the sender client that didn't told us about this chunk, or the relay server that didn't forwarded the correct information.`, spinner)
 				process.exit(1)
 			}
-			if (!await exists(path.dirname(savePath))) await mkdir(path.dirname(savePath), { recursive: true })
 
 			try {
+				logDebugPerformance(`Saving chunk ${index}...`)
 				if(!writingChunks[fileForChunk.path]) {
 					currentFileDownloadingBytes = 0
+					if (!await exists(path.dirname(savePath))) await mkdir(path.dirname(savePath), { recursive: true })
 					writingChunks[fileForChunk.path] = await Bun.file(savePath, { create: true }).writer({ highWaterMark: 100 * 1024 * 1024 })
 				}
 
@@ -372,6 +377,7 @@ export default async function () {
 				_updateFilesDownloadingSpinner()
 
 				await writingChunks[fileForChunk.path].write(plain)
+				logDebugPerformance(`Saved chunk ${index}`)
 
 				receivedBytesFromRelay += plain.length
 				currentFileDownloadingBytes += plain.length
@@ -381,21 +387,24 @@ export default async function () {
 				process.exit(1)
 			}
 		}
-		// const t3 = performance.now()
-
-		// console.log(`chunk ${index}: read ${(t1 - t0).toFixed(1)}ms | ` + `decrypt ${(t2 - t1).toFixed(1)}ms | write ${(t3 - t2).toFixed(1)}ms`,)
 
 		// If we finished processing the last file, end its associated file stream writer to free up memory
-		if (writingChunks.length >= 2) for (const name in writingChunks) {
+		if (Object.keys(writingChunks).length >= 2) for (const name in writingChunks) {
 			if (name == fileForChunk.path) continue
+
+			logDebugPerformance(`Ending file stream for ${name} to free up memory...`)
 			await writingChunks[name].end()
+			logDebugPerformance(`Ended file stream for ${name}`)
 			delete writingChunks[name]
 		}
 
 		if (lastChunkId != null && lastChunkId != 0 && lastReceivedChunkIndex >= lastChunkId) {
 			spinner.stop()
 
-			// TODO
+			if (globalThis.debugPerformances === true) await saveDebugPerformances()
+
+			// TODO: end download
+			// TODO: take structure (in primaryDetails) and create folders if needed to have the same exact structure
 			console.log("!! FINISHED !! FINISHED !! FINISHED !! FINISHED !! FINISHED !! FINISHED !! FINISHED !!")
 			console.log("!! FINISHED !! FINISHED !! FINISHED !! FINISHED !! FINISHED !! FINISHED !! FINISHED !!")
 			console.log(`lastChunkId: ${lastChunkId} ; lastReceivedChunkIndex: ${lastReceivedChunkIndex}`)
@@ -406,6 +415,7 @@ export default async function () {
 		}
 
 		acknowledgeChunks(index)
+		logDebugPerformance(`Finished processing chunk ${index} (${socketQueue.queue.length} messages in queue)`)
 		isProcessingChunk = false
 	}
 
