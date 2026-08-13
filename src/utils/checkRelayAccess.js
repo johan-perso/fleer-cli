@@ -1,6 +1,7 @@
 import chalk from "chalk"
 
 import displayFatalError from "./displayFatalError.js"
+import displayWarning from "./displayWarning.js"
 import { askConfirmation } from "./tuiPrompts.js"
 
 export default async function ({ relayUrl, spinner, logDebugPerformance, supportedProtocolVersions }) {
@@ -27,7 +28,7 @@ export default async function ({ relayUrl, spinner, logDebugPerformance, support
 
 	if(!supportedProtocolVersions.includes(relayServerInfosJson?.data?.server?.protocolVersion)) {
 		spinner.stop()
-		displayWarning(`The relay server at ${chalk.cyan(relayUrl)} is using an unsupported protocol version (${chalk.cyan(relayServerInfosJson?.data?.server?.protocolVersion)}).\n  The use of this relay could cause issues when sending or receiving files.\n  Supported versions by Fleer CLI are: ${supportedProtocolVersions.map(v => chalk.cyan(v)).join(", ")}.`)
+		displayWarning(`The relay server at ${chalk.cyan(relayUrl)} is using an unsupported protocol version (${chalk.cyan(relayServerInfosJson?.data?.server?.protocolVersion)}).\n  The use of this relay could cause issues when sending or receiving files.\n  Supported versions by Fleer CLI are: ${supportedProtocolVersions.map(v => chalk.cyan(v)).join(", ")}.`, spinner)
 		const shouldContinueIncompatibleProtocol = await askConfirmation("Do you want to continue anyway?")
 		if (!shouldContinueIncompatibleProtocol) return process.exit()
 		else spinner.start()
