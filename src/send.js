@@ -20,7 +20,7 @@ import { logDebugPerformance, saveDebugPerformances, appendSocketDebugEvent } fr
 import checkNonTlsConnection from "./utils/checkNonTlsConnection.js"
 
 var relayServerUrl = "http://192.168.1.174:8080/"
-const CHUNK_SIZE = 5 * 1024 * 1024 // 5 MiB
+const CHUNK_SIZE = 2 * 1024 * 1024 // 2 MiB
 const supportedProtocolVersions = [1]
 const maxErrorsCount = 20
 
@@ -325,7 +325,8 @@ export default async function () {
 	var isSendingProcessEnded = false
 	var startSendingTime = null
 
-	var sentBytesToRelay = 0
+	var sentBytesToRelayDisplay = 0
+	var sentBytesToRelayExact = 0
 	var mbps = 0
 	var mbpsEmoji = "📈"
 
@@ -356,12 +357,12 @@ export default async function () {
 		}
 		if(isSendingProcessEnded && !spinnerFailed) {
 			const totalTime = Math.round((Date.now() - startSendingTime) / 1000)
-			newText += `\n  Took ${chalk.cyan(totalTime > 300 ? `${Math.floor(totalTime / 60)} min ${totalTime % 60} sec` : `${totalTime} sec`)} for ${chalk.cyan(filesize(sentBytesToRelay))}.`
+			newText += `\n  Took ${chalk.cyan(totalTime > 300 ? `${Math.floor(totalTime / 60)} min ${totalTime % 60} sec` : `${totalTime} sec`)} for ${chalk.cyan(filesize(sentBytesToRelayDisplay))}.`
 			newText += `\n  ${chalk.dim("Waiting for receiver to finish downloading...")}`
 		} else if(isSendingProcessInterrupted && !spinnerFailed) {
 			newText += `\n  ${chalk.dim("Transfer was interrupted. Waiting for the receiver to reconnect...")}`
 		} else if(!spinnerFailed) {
-			newText += `\n\n${chalk.dim(`sent ${chalk.cyan(filesize(sentBytesToRelay))} / ${chalk.cyan(filesize(totalSizeBytes))} (${Math.floor((sentBytesToRelay / totalSizeBytes) * 100)}%)`)}`
+			newText += `\n\n${chalk.dim(`sent ${chalk.cyan(filesize(sentBytesToRelayDisplay))} / ${chalk.cyan(filesize(totalSizeBytes))} (${Math.floor((sentBytesToRelayDisplay / totalSizeBytes) * 100)}%)`)}`
 			newText += `\n${chalk.dim(`use ${chalk.cyan("Ctrl+C")} to cancel transfer`)}`
 		}
 
@@ -430,7 +431,8 @@ export default async function () {
 			allowedBytesByRelay = null
 			isWaitingForRelayToAllowSending = false
 
-			sentBytesToRelay = 0
+			sentBytesToRelayDisplay = 0
+			sentBytesToRelayExact = 0
 			startSendingTime = null
 
 			currentFileSentBytes = 0
@@ -476,16 +478,16 @@ export default async function () {
 	const mbpsHistory = []
 	const MBPS_HISTORY_SIZE = 8
 	function _calculateMbps() {
-		if (lastUploadedBytes === sentBytesToRelay) return // no new bytes sent since last check
+		if (lastUploadedBytes === sentBytesToRelayDisplay) return // no new bytes sent since last check
 		if (performance.now() - lastMbpsCheck < 100) return // avoid calculating if we already did it less than 100ms ago
 
-		if (sentBytesToRelay < lastUploadedBytes) {
+		if (sentBytesToRelayDisplay < lastUploadedBytes) {
 			// This should not happen, but just in case, we reset the values
 			lastMbpsCheck = performance.now()
-			lastUploadedBytes = sentBytesToRelay
+			lastUploadedBytes = sentBytesToRelayDisplay
 			return
 		}
-		if (sentBytesToRelay === 0) {
+		if (sentBytesToRelayDisplay === 0) {
 			mbps = 0
 			mbpsEmoji = "📈"
 			return
@@ -493,7 +495,7 @@ export default async function () {
 
 		const now = performance.now()
 		const elapsedSeconds = (now - lastMbpsCheck) / 1000
-		const sentBytes = sentBytesToRelay - lastUploadedBytes
+		const sentBytes = sentBytesToRelayDisplay - lastUploadedBytes
 		const newMbps = (sentBytes / 1_000_000) / elapsedSeconds // in MB/s
 
 		mbpsHistory.push(newMbps)
@@ -506,7 +508,7 @@ export default async function () {
 		mbps = averageMbps
 
 		lastMbpsCheck = now
-		lastUploadedBytes = sentBytesToRelay
+		lastUploadedBytes = sentBytesToRelayDisplay
 	}
 
 	async function sendFiles() {
@@ -564,7 +566,7 @@ export default async function () {
 				logDebugPerformance(`${file.virtualPath}: Encrypted chunk ${currentFileChunkIndex + 1}/${total} (virtualChunkIndex: ${virtualChunkIndex})`)
 				if(!_checkIfSendingProcessIsStillValid(sendingProcessId)) return
 
-				while (allowedBytesByRelay !== null && payload.length + sentBytesToRelay > allowedBytesByRelay) { // 1st check for allowed bytes by relay
+				while (allowedBytesByRelay !== null && payload.length + sentBytesToRelayExact > allowedBytesByRelay) { // 1st check for allowed bytes by relay
 					isWaitingForRelayToAllowSending = true
 					_updateFilesSendingSpinner()
 					await new Promise(resolve => setTimeout(resolve, 500))
@@ -584,7 +586,7 @@ export default async function () {
 					(uploadedBytes) => {
 						const delta = uploadedBytes - currentChunkSentBytes
 						currentChunkSentBytes = uploadedBytes // total bytes currently uploaded for this chunk
-						sentBytesToRelay += delta // total bytes sent to the relay server while including this chunk
+						sentBytesToRelayDisplay += delta // total bytes sent to the relay server while including this chunk
 
 						if (Date.now() - lastProgressUpdateTime > 400) { // max one update every 400ms
 							_calculateMbps()
@@ -631,7 +633,8 @@ export default async function () {
 				virtualChunkIndex++
 				currentFileSentBytes += payload.length
 				if (responseJson?.data?.chunkId != null && responseJson?.data?.receivedBytes != null && !isNaN(responseJson.data.receivedBytes) && responseJson.data.receivedBytes >= 1) {
-					sentBytesToRelay = responseJson.data.receivedBytes // more trusted than what we calculate ourselves
+					sentBytesToRelayExact = responseJson.data.receivedBytes // more trusted than what we calculate ourselves
+					if(sentBytesToRelayExact > sentBytesToRelayDisplay) sentBytesToRelayDisplay = sentBytesToRelayExact
 				}
 				_calculateMbps()
 				_updateFilesSendingSpinner()
