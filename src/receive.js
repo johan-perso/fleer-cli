@@ -156,7 +156,7 @@ export default async function () {
 
 	// Initialize a few (many 💀) variables for the files downloading process
 	var filesCount = shareDetailsJson?.data?.filesCount || 0
-	// var foldersCount = shareDetailsJson?.data?.foldersCount || 0 // TODO
+	var foldersCount = shareDetailsJson?.data?.foldersCount || 0
 	var totalSizeBytes = shareDetailsJson?.data?.totalSize || 0
 	var lastReceivedChunkIndex = -1
 
@@ -172,10 +172,12 @@ export default async function () {
 	var lastChunkId = null
 	var isDownloadingProcessEnded = false
 	var startDownloadingTime = null
+	var endedDownloadTime = null
 	var isSenderDisconnected = false
 
 	var receivedBytesFromRelay = 0
 	var isProcessingChunk = false
+	var shouldIgnoreChunks = false
 	var mbps = null
 	var mbpsEmoji = "📈"
 
@@ -193,8 +195,8 @@ export default async function () {
 				: "(Starting...)"
 
 		var newText = isDownloadingProcessEnded
-			? "" // `Sent ${chalk.cyan(intlFormatter.format(currentFilePosition || filesCount || 1))} file${currentFilePosition > 1 ? "s" : ""} and ${chalk.cyan(intlFormatter.format(foldersCount))} folder${foldersCount > 1 ? "s" : ""}.`
-			: `Downloading file ${chalk.cyan(intlFormatter.format(currentFilePosition || 1))} / ${chalk.cyan(intlFormatter.format(filesCount))} ${chalk.dim(downloadingStatus)}`
+			? `Received ${chalk.cyan(intlFormatter.format(currentFilePosition || 1))} file${currentFilePosition > 1 ? "s" : ""} and ${chalk.cyan(intlFormatter.format(foldersCount))} folder${foldersCount > 1 ? "s" : ""}.`
+			: `Receiving file ${chalk.cyan(intlFormatter.format(currentFilePosition || 1))} / ${chalk.cyan(intlFormatter.format(filesCount))} ${chalk.dim(downloadingStatus)}`
 		if (currentFileDisplayName && !isDownloadingProcessEnded) {
 			var percentage = currentFileSize > 0 ? Math.floor((currentFileDownloadingBytes / currentFileSize) * 100) : 0
 			if (percentage > 100) percentage = 100
@@ -202,8 +204,8 @@ export default async function () {
 		}
 
 		if(isDownloadingProcessEnded) {
-			const totalTime = Math.round((Date.now() - startDownloadingTime) / 1000)
-			newText += `\n  Took ${chalk.cyan(totalTime > 300 ? `${Math.floor(totalTime / 60)} min ${totalTime % 60} sec` : `${totalTime} sec`)} for ${chalk.cyan(filesize(receivedBytesFromRelay))}.`
+			const totalTime = Math.round((endedDownloadTime - startDownloadingTime) / 1000)
+			newText += `\n  ${chalk.cyan(totalTime > 300 ? `${Math.floor(totalTime / 60)} min ${totalTime % 60} sec` : `${totalTime} sec`)} for ${chalk.cyan(filesize(receivedBytesFromRelay))}.`
 		} else {
 			var totalPercentage = totalSizeBytes > 0 ? Math.floor((receivedBytesFromRelay / totalSizeBytes) * 100) : 0
 			if (totalPercentage > 99.9) totalPercentage = 100
@@ -253,7 +255,7 @@ export default async function () {
 			const confirmStartDownload = await askConfirmation("Do you want to start downloading the files now?")
 			if(!confirmStartDownload) {
 				spinner.fail("Download cancelled by user.")
-				process.exit(0)
+				process.exit()
 			}
 			process.stdout.moveCursor(0, -1)
 			process.stdout.clearLine(1)
@@ -280,15 +282,22 @@ export default async function () {
 			const unencryptedMessage = await cipher.decryptJson(message.data)
 
 			if(unencryptedMessage?.dataType == "FileChunks") registerChunkForFile(unencryptedMessage)
+			else if(unencryptedMessage?.dataType == "TransferFinished" && isDownloadingProcessEnded) {
+				if (globalThis.debugPerformances === true) await saveDebugPerformances()
+				process.exit()
+			}
 			break
 		case "lastChunkIndicated":
 			lastChunkId = message?.data?.lastChunkId
+			if (lastReceivedChunkIndex >= lastChunkId) finishDownload()
 			break
 		case "senderStatus":
 			isSenderDisconnected = !(message?.data?.connected || false)
 			if (spinner.isSpinning) _updateFilesDownloadingSpinner()
 			break
 		case "restartTransfer":
+			if (shouldIgnoreChunks) return logDebugPerformance("Ignoring restartTransfer message because shouldIgnoreChunks is set to true.")
+
 			acknowledgeQueue.length = 0
 			socketQueue.queue.length = 0
 
@@ -301,6 +310,7 @@ export default async function () {
 			lastReceivedChunkIndex = -1
 			receivedBytesFromRelay = 0
 			startDownloadingTime = null
+			endedDownloadTime = null
 			lastChunkId = null
 
 			currentFileDownloadingBytes = 0
@@ -332,6 +342,7 @@ export default async function () {
 		}
 
 		// Handle binary data (such as chunks)
+		if (shouldIgnoreChunks) return logDebugPerformance("Ignoring received chunk because shouldIgnoreChunks is set to true.")
 		isProcessingChunk = true
 		logDebugPerformance("Received a binary chunk from relay server, analyzing it...")
 		const view = new DataView(event.data)
@@ -347,6 +358,7 @@ export default async function () {
 
 		// Decrypt, and save this chunk to the correct file
 		logDebugPerformance(`Decrypting chunk ${index} (size before decryption: ${payload.length} bytes)`)
+		if(startDownloadingTime == null) startDownloadingTime = Date.now()
 		const plain = await cipher.decryptChunk(payload, index)
 		logDebugPerformance(`Decrypted chunk ${index} (size after decryption: ${plain.length} bytes)`)
 
@@ -398,21 +410,7 @@ export default async function () {
 			delete writingChunks[name]
 		}
 
-		if (lastChunkId != null && lastChunkId != 0 && lastReceivedChunkIndex >= lastChunkId) {
-			spinner.stop()
-
-			if (globalThis.debugPerformances === true) await saveDebugPerformances()
-
-			// TODO: end download
-			// TODO: take structure (in primaryDetails) and create folders if needed to have the same exact structure
-			console.log("!! FINISHED !! FINISHED !! FINISHED !! FINISHED !! FINISHED !! FINISHED !! FINISHED !!")
-			console.log("!! FINISHED !! FINISHED !! FINISHED !! FINISHED !! FINISHED !! FINISHED !! FINISHED !!")
-			console.log(`lastChunkId: ${lastChunkId} ; lastReceivedChunkIndex: ${lastReceivedChunkIndex}`)
-			console.log(`lastChunkId: ${lastChunkId} ; lastReceivedChunkIndex: ${lastReceivedChunkIndex}`)
-			console.log(`lastChunkId: ${lastChunkId} ; lastReceivedChunkIndex: ${lastReceivedChunkIndex}`)
-			console.log("!! FINISHED !! FINISHED !! FINISHED !! FINISHED !! FINISHED !! FINISHED !! FINISHED !!")
-			console.log("!! FINISHED !! FINISHED !! FINISHED !! FINISHED !! FINISHED !! FINISHED !! FINISHED !!")
-		}
+		if (lastChunkId != null && lastChunkId != 0 && lastReceivedChunkIndex >= lastChunkId) finishDownload()
 
 		acknowledgeChunks(index)
 		logDebugPerformance(`Finished processing chunk ${index} (${socketQueue.queue.length} messages in queue)`)
@@ -439,6 +437,39 @@ export default async function () {
 			else break // list is ordered, so we can stop searching once we find a range that starts after the index
 		}
 		return match // null if no match found, or the last matching range if found
+	}
+
+	// Function that need to be called when the download is ended (all chunks received and written to disk)
+	async function finishDownload() {
+		// If we are currently saving a chunk file, we need to wait for it to finish to avoid corruption,
+		// even if that's clearly not supposed to happen
+		if(isProcessingChunk) while (isProcessingChunk) {
+			await new Promise(resolve => setTimeout(resolve, 500))
+		}
+
+		shouldIgnoreChunks = true // prevent any new chunk from being processed
+
+		endedDownloadTime = Date.now()
+		isDownloadingProcessEnded = true
+		spinner.succeed(_updateFilesDownloadingSpinner())
+
+		// TODO: take structure (in primaryDetails) and create folders if needed to have the same exact structure
+
+		socket.send(JSON.stringify({
+			type: "SendMsgToOtherWay",
+			data: await cipher.encryptJson({
+				highPriority: false,
+				dataType: "DownloadFinished",
+			})
+		}))
+
+		// While we wait for the sender to acknowledge (by sending "TransferFinished" message), we can free up memory by ending all file stream writers
+		for (const name in writingChunks) {
+			logDebugPerformance(`Ending file stream for ${name} to free up memory...`)
+			await writingChunks[name].end()
+			logDebugPerformance(`Ended file stream for ${name}`)
+			delete writingChunks[name]
+		}
 	}
 
 	// Connect to the relay server via WebSocket

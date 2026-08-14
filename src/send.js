@@ -337,7 +337,7 @@ export default async function () {
 
 	var lastSocketWarning = null
 	var spinnerFailed = false
-	function _updateFilesSendingSpinner() {
+	function _updateFilesSendingSpinner(isProcessEnding = false) {
 		const sendingStatus = isSendingProcessEnded || isSendingProcessInterrupted
 			? ""
 			: isWaitingForRelayToAllowSending
@@ -357,7 +357,7 @@ export default async function () {
 		if(isSendingProcessEnded && !spinnerFailed) {
 			const totalTime = Math.round((Date.now() - startSendingTime) / 1000)
 			newText += `\n  Took ${chalk.cyan(totalTime > 300 ? `${Math.floor(totalTime / 60)} min ${totalTime % 60} sec` : `${totalTime} sec`)} for ${chalk.cyan(filesize(sentBytesToRelayDisplay))}.`
-			newText += `\n  ${chalk.dim("Waiting for receiver to finish downloading...")}`
+			if(!isProcessEnding) newText += `\n  ${chalk.dim("Waiting for receiver to finish downloading...")}`
 		} else if(isSendingProcessInterrupted && !spinnerFailed) {
 			newText += `\n  ${chalk.dim("Transfer was interrupted. Waiting for the receiver to reconnect...")}`
 		} else if(!spinnerFailed) {
@@ -416,6 +416,29 @@ export default async function () {
 			spinner.start(_updateFilesSendingSpinner())
 
 			if(!currentSendingProcessId) sendFiles()
+			break
+		case "msgFromReceiver":
+			const unencryptedMessage = await cipher.decryptJson(message.data)
+
+			// Delete transfer when the receiver has finished downloading all files, and we were waiting for it
+			if(unencryptedMessage?.dataType == "DownloadFinished" && isSendingProcessEnded) {
+				socket.send(JSON.stringify({
+					type: "SendMsgToOtherWay",
+					data: await cipher.encryptJson({
+						highPriority: false,
+						dataType: "TransferFinished",
+					})
+				}))
+
+				await new Promise(resolve => setTimeout(resolve, 100)) // wait a bit to make sure the message is forwarded to receiver
+
+				socket.send(JSON.stringify({
+					type: "DeleteTransfer"
+				}))
+
+				spinner.succeed(_updateFilesSendingSpinner(true))
+				process.exit()
+			}
 			break
 		case "allowedBytesMaxUpdate":
 			// The relay server is limiting the amount of bytes it can keep in cache,
@@ -648,17 +671,10 @@ export default async function () {
 			currentFilePosition++
 		}
 
-		// All files have been sent, we can end the sending process
+		// All files have been sent, we can mark the sending process as ended on our side
 		socket.send(JSON.stringify({ type: "LastChunk", data: { lastChunkId: virtualChunkIndex - 1 } }))
 		isSendingProcessEnded = true
 		_updateFilesSendingSpinner()
-
-		// TODO: then, delete the transfer on the relay server once we know the receiver downloaded everything
-		// TODO: don't process.exit() here bc we need to stay connected if transfer need to be restarted
-		// TODO: wait for receiver to receive everything before spinner.succeed() and saveDebugPerformances()
-
-		// Save debug performances file on disk
-		if (globalThis.debugPerformances === true) await saveDebugPerformances()
 	}
 
 	// Method to check if the transfer was not interrupted by another part of the code
