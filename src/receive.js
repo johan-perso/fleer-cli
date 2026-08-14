@@ -222,11 +222,11 @@ export default async function () {
 	// Method to handle incoming JSON WebSocket messages
 	async function handleJsonSocketMessage(message) {
 		// Avoid spamming the console if server keep sending the same msg
-		if (lastEventType === message?.type) {
+		if (lastEventType === message?.type && !["precedentsChunksUpdate", "msgFromSender", "senderStatus"].includes(message?.type)) {
 			lastEventCount++
-			if (lastEventCount > 10) {
+			if (lastEventCount > 30) {
 				lastSocketWarning = `Received ${lastEventCount} consecutive messages of type: ${stripAnsi(message?.type)}. Slowing down the processing...`
-				await new Promise(resolve => setTimeout(resolve, (lastEventCount * 100) > 10_000 ? 10_000 : lastEventCount * 100)) // wait a bit to avoid spamming the console
+				await new Promise(resolve => setTimeout(resolve, (lastEventCount * 25) > 10_000 ? 10_000 : lastEventCount * 25)) // wait a bit to avoid spamming the console
 			}
 		} else {
 			lastEventCount = 1
