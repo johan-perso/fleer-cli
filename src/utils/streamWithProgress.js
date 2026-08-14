@@ -5,8 +5,6 @@ export default function streamWithProgress(
 	const total = payload.byteLength
 	let uploaded = 0
 
-	const chunkSize = 512 * 1024 // 512 KB
-
 	return new ReadableStream({
 		pull(controller) {
 			if (uploaded >= total) {
@@ -14,17 +12,10 @@ export default function streamWithProgress(
 				return
 			}
 
-			const end = Math.min(uploaded + chunkSize, total)
-			const chunk = payload.subarray(uploaded, end)
+			controller.enqueue(payload.subarray(uploaded, total))
+			uploaded = total
 
-			controller.enqueue(chunk)
-
-			uploaded = end
-
-			onProgress(
-				uploaded,
-				total,
-			)
+			onProgress(uploaded, total)
 		}
 	})
 }
