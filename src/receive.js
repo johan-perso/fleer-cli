@@ -214,7 +214,7 @@ export default async function () {
 			newText += `\n${chalk.dim(`use ${chalk.cyan("Ctrl+C")} to cancel download`)}`
 		}
 
-		if (lastSocketWarning) newText += `\n${chalk.yellow("⚠")} ${chalk.dim(reduceString.maxLines(lastSocketWarning, 1, 5))}`
+		if (lastSocketWarning) newText += `\n${chalk.yellow("⚠")} ${chalk.dim(reduceString.maxLines(lastSocketWarning, 3, 5))}`
 		if (isSenderDisconnected) newText += `\n${chalk.yellow("⚠")} ${chalk.dim(reduceString.maxLines("Sender seems to be disconnected.", 1, 5))}`
 
 		if (spinner.text !== newText) spinner.text = newText
@@ -325,7 +325,7 @@ export default async function () {
 			writingChunks = {}
 			fileChunksCorrelationTable.length = 0
 
-			lastSocketWarning = "Transfer was interrupted and had to be restarted."
+			lastSocketWarning = `Transfer was interrupted and needs to be restarted (${chalk.dim(stripAnsi(message?.data?.message || "unknown reason"))}).`
 			_updateFilesDownloadingSpinner()
 		}
 	}

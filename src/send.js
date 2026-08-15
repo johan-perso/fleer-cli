@@ -365,7 +365,7 @@ export default async function () {
 			newText += `\n${chalk.dim(`use ${chalk.cyan("Ctrl+C")} to cancel transfer`)}`
 		}
 
-		if (lastSocketWarning) newText += `\n${chalk.yellow("⚠")} ${chalk.dim(reduceString.maxLines(lastSocketWarning, 1, 2))}`
+		if (lastSocketWarning) newText += `\n${chalk.yellow("⚠")} ${chalk.dim(reduceString.maxLines(lastSocketWarning, 3, 2))}`
 
 		if (spinner.text !== newText) spinner.text = newText
 		return newText
@@ -469,7 +469,7 @@ export default async function () {
 			lastUploadedBytes = 0
 			mbpsHistory.length = 0
 
-			lastSocketWarning = "Transfer was interrupted and needs to be restarted."
+			lastSocketWarning = `Transfer was interrupted and needs to be restarted (${chalk.dim(stripAnsi(message?.data?.message || "unknown reason"))}).`
 			_updateFilesSendingSpinner()
 
 			if(!isSendingProcessEnded) while (!isSendingProcessInterrupted) {
