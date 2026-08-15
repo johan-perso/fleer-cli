@@ -15,6 +15,7 @@ import streamWithProgress from "./utils/streamWithProgress.js"
 import displayFatalError from "./utils/displayFatalError.js"
 import displayWarning from "./utils/displayWarning.js"
 import checkRelayAccess from "./utils/checkRelayAccess.js"
+import SocketQueue from "./utils/socketQueue.js"
 import { logDebugPerformance, saveDebugPerformances, appendSocketDebugEvent } from "./utils/debugPerformances.js"
 import checkNonTlsConnection from "./utils/checkNonTlsConnection.js"
 
@@ -200,7 +201,7 @@ export default async function () {
 		if (currentFileDisplayName && !isDownloadingProcessEnded) {
 			var percentage = currentFileSize > 0 ? Math.floor((currentFileDownloadingBytes / currentFileSize) * 100) : 0
 			if (percentage > 100) percentage = 100
-			newText += `\n${chalk.cyan("◉")} ${percentage > 0 && percentage <= 9 ? "0" : ""}${percentage} %   ${chalk.dim(reduceString.maxLines(currentFileDisplayName, 1, 2 + 5 + 3))}`
+			newText += `\n${chalk.cyan("◌")} ${percentage > 0 && percentage <= 9 ? "0" : ""}${percentage} %   ${chalk.dim(reduceString.maxLines(currentFileDisplayName, 1, 2 + 5 + 3))}`
 		}
 
 		if(isDownloadingProcessEnded) {
@@ -526,43 +527,5 @@ export default async function () {
 			socket.send(JSON.stringify({ type: "AcknowledgeChunks", data: { chunkIds: chunksToAcknowledge } }))
 			lastAcknowledgeTime = Date.now()
 		}, 100) // Acknowledge every 100ms
-	}
-}
-
-class SocketQueue {
-	constructor(options = {}) {
-		if (!options.handleEvent || typeof options.handleEvent !== "function") {
-			throw new Error("SocketQueue requires a handleEvent function in options.")
-		}
-
-		this.queue = []
-		this.isProcessing = false,
-		this.handleEvent = options.handleEvent
-	}
-
-	enqueue(message) {
-		if(message?.data instanceof Object && message.data?.highPriority) {
-			this.queue.unshift(message) // add to the front of the queue for high priority messages
-		} else {
-			this.queue.push(message) // add to the end of the queue for normal messages
-		}
-
-		this.processQueue()
-	}
-
-	async processQueue() {
-		if (this.isProcessing) return
-		this.isProcessing = true
-
-		while (this.queue.length > 0) {
-			const event = this.queue.shift()
-			try {
-				await this.handleEvent(event)
-			} catch (error) {
-				console.error("Error processing an event from the queue:", error)
-			}
-		}
-
-		this.isProcessing = false
 	}
 }

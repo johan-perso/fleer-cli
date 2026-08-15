@@ -15,6 +15,7 @@ import { askConfirmation, askIgnoreFile } from "./utils/tuiPrompts.js"
 import streamWithProgress from "./utils/streamWithProgress.js"
 import displayFatalError from "./utils/displayFatalError.js"
 import checkRelayAccess from "./utils/checkRelayAccess.js"
+import SocketQueue from "./utils/socketQueue.js"
 import { logDebugPerformance, saveDebugPerformances, appendSocketDebugEvent } from "./utils/debugPerformances.js"
 import checkNonTlsConnection from "./utils/checkNonTlsConnection.js"
 
@@ -324,6 +325,9 @@ export default async function () {
 	var isSendingProcessEnded = false
 	var startSendingTime = null
 
+	var lastEventType = null
+	var lastEventCount = 0
+
 	var sentBytesToRelayDisplay = 0
 	var sentBytesToRelayExact = 0
 	var mbps = 0
@@ -352,7 +356,7 @@ export default async function () {
 		if (currentFileDisplayName && !isSendingProcessEnded) {
 			var percentage = currentFileSize > 0 ? Math.floor((currentFileSentBytes / currentFileSize) * 100) : 0
 			if (percentage > 100) percentage = 100
-			newText += `\n${chalk.cyan("◉")} ${percentage > 0 && percentage <= 9 ? "0" : ""}${percentage} %   ${chalk.dim(reduceString.maxLines(currentFileDisplayName, 1, 2 + 5 + 3))}`
+			newText += `\n${chalk.cyan("◌")} ${percentage > 0 && percentage <= 9 ? "0" : ""}${percentage} %   ${chalk.dim(reduceString.maxLines(currentFileDisplayName, 1, 2 + 5 + 3))}`
 		}
 		if(isSendingProcessEnded && !spinnerFailed) {
 			const totalTime = Math.round((Date.now() - startSendingTime) / 1000)
@@ -371,22 +375,19 @@ export default async function () {
 		return newText
 	}
 
-	// Connect to the relay server via WebSocket
-	var isConnectedToShareDisplayedOnce = false
-	spinner.start("Establishing real-time connection to the relay server...")
-	const socket = new WebSocket(`${relayServerUrl.replace("http", "ws")}/shares/updates`)
-	socket.send = ((originalSend) => {
-		return function (data) {
-			appendSocketDebugEvent(`(Sender) 🫸 Sending message to relay: ${JSON.stringify(data)}`)
-			originalSend.call(this, data)
+	// Method to handle incoming JSON WebSocket messages
+	async function handleJsonSocketMessage(message) {
+		// Avoid spamming the console if server keep sending the same msg
+		if (lastEventType === message?.type && !["allowedBytesMaxUpdate", "msgFromReceiver", "receiverStatus"].includes(message?.type)) {
+			lastEventCount++
+			if (lastEventCount > 30) {
+				lastSocketWarning = `Received ${lastEventCount} consecutive messages of type: ${stripAnsi(message?.type)}. Slowing down the processing...`
+				await new Promise(resolve => setTimeout(resolve, (lastEventCount * 25) > 10_000 ? 10_000 : lastEventCount * 25)) // wait a bit to avoid spamming the console
+			}
+		} else {
+			lastEventCount = 1
+			lastEventType = message?.type
 		}
-	})(socket.send)
-	socket.onopen = () => {
-		socket.send(JSON.stringify({ type: "ConnectToShare", data: { shareId, isSender: true } }))
-	}
-	socket.onmessage = async (event) => { // TODO: integrate queue system here
-		const message = JSON.parse(event.data)
-		appendSocketDebugEvent(`(Sender) 🫷 Received message from relay: ${JSON.stringify(event.data)}`)
 
 		switch (message?.type) {
 		case "welcome":
@@ -449,6 +450,8 @@ export default async function () {
 		case "restartTransfer":
 			// As seen in the comment of allowedBytesMaxUpdate handler, the relay keep chunks in cache for a limited time.
 			// If the receiver ask for chunks that got deleted from the relay cache, transfer will have to be restarted from the beginning.
+			socketQueue.queue.length = 0
+
 			spinnerFailed = false
 			currentSendingProcessId = null
 			allowedBytesByRelay = null
@@ -482,6 +485,39 @@ export default async function () {
 			sendFiles()
 			break
 		}
+	}
+
+	// Method to handle incoming WebSocket messages
+	async function handleSocketEvent(event) {
+		await appendSocketDebugEvent(`(Sender) 🫷 Received message from relay: ${JSON.stringify(event.data)}`)
+
+		// Handle JSON encoded messages
+		if (typeof event.data === "string") {
+			const message = JSON.parse(event.data)
+			await handleJsonSocketMessage(message)
+			return
+		}
+
+		await appendSocketDebugEvent("(Sender) 🫷 Not processing binary formed message from relay.")
+	}
+
+	// Connect to the relay server via WebSocket
+	var isConnectedToShareDisplayedOnce = false
+	const socketQueue = new SocketQueue({ handleEvent: handleSocketEvent })
+
+	spinner.start("Establishing real-time connection to the relay server...")
+	const socket = new WebSocket(`${relayServerUrl.replace("http", "ws")}/shares/updates`)
+	socket.send = ((originalSend) => {
+		return function (data) {
+			appendSocketDebugEvent(`(Sender) 🫸 Sending message to relay: ${JSON.stringify(data)}`)
+			originalSend.call(this, data)
+		}
+	})(socket.send)
+	socket.onopen = () => {
+		socket.send(JSON.stringify({ type: "ConnectToShare", data: { shareId, isSender: true } }))
+	}
+	socket.onmessage = (event) => {
+		socketQueue.enqueue(event)
 	}
 	socket.onerror = (error) => {
 		lastSocketWarning = `${error?.message || `Unknown WebSocket error${error?.code ? ` (${error.code})` : ""}`}`
