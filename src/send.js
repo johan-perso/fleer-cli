@@ -229,7 +229,7 @@ export default async function () {
 	logDebugPerformance("---------------")
 	spinner.start("Creating the transfer...")
 	while(relayServerUrl.endsWith("/")) relayServerUrl = relayServerUrl.slice(0, -1)
-	await checkRelayAccess({ relayUrl: relayServerUrl, spinner, logDebugPerformance, supportedProtocolVersions })
+	await checkRelayAccess({ relayUrl: relayServerUrl, spinner, logDebugPerformance, supportedProtocolVersions, chunkSize: CHUNK_SIZE })
 
 	// Create a transfer to the server
 	logDebugPerformance("shareCreation...")
@@ -310,7 +310,7 @@ export default async function () {
 	}
 	logDebugPerformance("Sent primaryDetails!")
 
-	const errorSuffix = "\n  This is likely due to a misconfiguration or an unsupported relay server.\n  Please contact the relay server administrator for further assistance."
+	const errorSuffix = "\nThis is likely due to a misconfiguration or an unsupported relay server.\nPlease contact the relay server administrator for further assistance."
 	if(sendPrimaryDetailsJson?.data?.chunkId !== null) displayFatalError(`The relay server returned an unexpected chunk ID while sending the primary details.${errorSuffix}`, spinner)
 	if(sendPrimaryDetailsJson?.data?.bytes < 1) displayFatalError(`The relay server returned an unexpected number of bytes received while sending the primary details.${errorSuffix}`, spinner)
 	if(sendPrimaryDetailsJson?.data?.allowedBytesMax < 1) displayFatalError(`The relay server returned an unexpected number of bytes allowed while sending the primary details.${errorSuffix}`, spinner)
