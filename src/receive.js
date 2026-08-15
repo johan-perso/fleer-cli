@@ -62,7 +62,7 @@ export default async function () {
 			shareKey = downloadUrl?.pathname?.split("/d/")?.[1]
 			encryptionKey = downloadUrl?.hash?.split("#")?.[1]
 		} catch (error) {
-			displayFatalError(`Invalid download URL provided.\nTo display more information about how Fleer works, use ${chalk.cyan("fleer help-download")}.`, null)
+			displayFatalError(`Invalid download URL provided ("${chalk.dim(downloadUrlStr)}").\nTo display more information about how Fleer works, use ${chalk.cyan("fleer help-download")}.`, null)
 		}
 	}
 
@@ -205,7 +205,7 @@ export default async function () {
 
 		if(isDownloadingProcessEnded) {
 			const totalTime = Math.round((endedDownloadTime - startDownloadingTime) / 1000)
-			newText += `\n  ${chalk.cyan(totalTime > 300 ? `${Math.floor(totalTime / 60)} min ${totalTime % 60} sec` : `${totalTime} sec`)} for ${chalk.cyan(filesize(receivedBytesFromRelay))}.`
+			newText += `\n  Took ${chalk.cyan(totalTime > 300 ? `${Math.floor(totalTime / 60)} min ${totalTime % 60} sec` : `${totalTime} sec`)} for ${chalk.cyan(filesize(receivedBytesFromRelay))}.`
 		} else {
 			var totalPercentage = totalSizeBytes > 0 ? Math.floor((receivedBytesFromRelay / totalSizeBytes) * 100) : 0
 			if (totalPercentage > 99.9) totalPercentage = 100

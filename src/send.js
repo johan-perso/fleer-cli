@@ -437,6 +437,7 @@ export default async function () {
 				}))
 
 				spinner.succeed(_updateFilesSendingSpinner(true))
+				if (globalThis.debugPerformances === true) await saveDebugPerformances()
 				process.exit()
 			}
 			break
@@ -486,9 +487,9 @@ export default async function () {
 		lastSocketWarning = `${error?.message || `Unknown WebSocket error${error?.code ? ` (${error.code})` : ""}`}`
 		_updateFilesSendingSpinner()
 	}
-	socket.onclose = () => {
-		lastSocketWarning = "Real-time connection to the relay server was closed due to an unknown reason."
-		spinnerFailed = true
+	socket.onclose = (event) => {
+		const reason = event?.reason
+		lastSocketWarning = `Real-time connection to the relay server was closed ${reason ? `(${reason})` : "due to an unknown reason"}.`
 		spinner.fail(_updateFilesSendingSpinner())
 		process.exit(1)
 		// TODO: try to resume, it may be due to a temporary network issue
@@ -646,6 +647,10 @@ export default async function () {
 					isWaitingForRelayToAllowSending = true
 					_updateFilesSendingSpinner()
 					await new Promise(resolve => setTimeout(resolve, 500))
+					continue
+				} else if(responseJson?.error == "missing_previous_chunk") { // transfer may have restarted during the upload
+					await new Promise(resolve => setTimeout(resolve, 500))
+					currentFileChunkIndex--
 					continue
 				} else if(responseJson?.error) {
 					displayFatalError(`Relay server threw an error (${chalk.dim(stripAnsi(responseJson?.data?.error || responseJson?.error))}):\n  ${stripAnsi(responseJson?.data?.message || responseJson?.message || JSON.stringify(responseJson))}.`, spinner)
