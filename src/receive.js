@@ -3,8 +3,8 @@ import ora from "ora"
 import { filesize } from "filesize"
 import path from "node:path"
 import { mkdir, exists } from "node:fs/promises"
-import { stripVTControlCharacters as stripAnsi } from "node:util"
 
+import { stripForDisplay } from "./utils/stripText.js"
 import getAbsoluteLowest from "./utils/absoluteLowest.js"
 import reduceString from "./utils/reduceString.js"
 import doubleCheckPaths from "./utils/doubleCheckPaths.js"
@@ -107,7 +107,7 @@ export default async function () {
 			"shareId": shareKey
 		}),
 	}).catch(error => {
-		displayFatalError(`Could not reach the relay server at ${chalk.cyan(stripAnsi(relayUrl))}.\nError: ${error.message}`, spinner)
+		displayFatalError(`Could not reach the relay server at ${chalk.cyan(stripForDisplay(relayUrl))}.\nError: ${error.message}`, spinner)
 	})
 
 	var shareDetailsJson
@@ -123,7 +123,7 @@ export default async function () {
 		if(statusCode == 404) {
 			displayFatalError(`No transfer associated to this Share Key was found on the relay server.\nShare Key: ${chalk.cyan(shareKey)}\nRelay URL: ${chalk.cyan(relayUrl)}`, spinner)
 		} else {
-			displayFatalError(`Relay server threw an error (${chalk.dim(stripAnsi(shareCreationJson?.data?.error || shareCreationJson?.error))}):\n${stripAnsi(shareDetailsJson?.data?.message || shareDetailsJson?.message || JSON.stringify(shareDetailsJson))}`, spinner)
+			displayFatalError(`Relay server threw an error (${chalk.dim(stripForDisplay(shareCreationJson?.data?.error || shareCreationJson?.error))}):\n${stripForDisplay(shareDetailsJson?.data?.message || shareDetailsJson?.message || JSON.stringify(shareDetailsJson))}`, spinner)
 		}
 	}
 	lastChunkId = shareDetailsJson?.data?.lastChunkId || null
@@ -152,7 +152,7 @@ export default async function () {
 		displayFatalError("Decrypted primary details successfully, but didn't find valid data.\nThe encryption key might be incorrect, or the sender might have sent corrupted data.", spinner)
 	}
 	var senderDeviceName = primaryDetails?.deviceName?.trim() || "Sender's device"
-	senderDeviceName = senderDeviceName.length > 1 && senderDeviceName.length < 65 ? stripAnsi(senderDeviceName) : "Sender's device"
+	senderDeviceName = senderDeviceName.length > 1 && senderDeviceName.length < 65 ? stripForDisplay(senderDeviceName) : "Sender's device"
 	spinner.succeed("Encryption key is valid.")
 
 	// Initialize a few (many 💀) variables for the files downloading process
@@ -228,7 +228,7 @@ export default async function () {
 		if (lastEventType === message?.type && !["precedentsChunksUpdate", "msgFromSender", "senderStatus"].includes(message?.type)) {
 			lastEventCount++
 			if (lastEventCount > 30) {
-				lastSocketWarning = `Received ${lastEventCount} consecutive messages of type: ${stripAnsi(message?.type)}. Slowing down the processing...`
+				lastSocketWarning = `Received ${lastEventCount} consecutive messages of type: ${stripForDisplay(message?.type)}. Slowing down the processing...`
 				await new Promise(resolve => setTimeout(resolve, (lastEventCount * 25) > 10_000 ? 10_000 : lastEventCount * 25)) // wait a bit to avoid spamming the console
 			}
 		} else {
@@ -241,11 +241,11 @@ export default async function () {
 			spinner.text = `Establishing real-time connection to the relay server... ${chalk.dim("(Connected)")}`
 			break
 		case "error": // connection is not closed, act as a warning
-			lastSocketWarning = stripAnsi(`${message?.data?.error || message?.error} - ${message?.data?.message || message?.message || JSON.stringify(message)}`)
+			lastSocketWarning = stripForDisplay(`${message?.data?.error || message?.error} - ${message?.data?.message || message?.message || JSON.stringify(message)}`)
 			_updateFilesDownloadingSpinner()
 			break
 		case "fatal": // connection is closed afterwards
-			displayFatalError(`Relay server threw an error (${chalk.dim(stripAnsi(message?.data?.error || message?.error))}):\n${stripAnsi(message?.data?.message || message?.message || JSON.stringify(message))}.`, spinner)
+			displayFatalError(`Relay server threw an error (${chalk.dim(stripForDisplay(message?.data?.error || message?.error))}):\n${stripForDisplay(message?.data?.message || message?.message || JSON.stringify(message))}.`, spinner)
 			break
 		case "connectedToShare":
 			if(!isConnectedToShareDisplayedOnce) spinner.succeed("Real-time connection established.")
@@ -326,7 +326,7 @@ export default async function () {
 			writingChunks = {}
 			fileChunksCorrelationTable.length = 0
 
-			lastSocketWarning = `Transfer was interrupted and needs to be restarted (${chalk.dim(stripAnsi(message?.data?.message || "unknown reason"))}).`
+			lastSocketWarning = `Transfer was interrupted and needs to be restarted (${chalk.dim(stripForDisplay(message?.data?.message || "unknown reason"))}).`
 			_updateFilesDownloadingSpinner()
 		}
 	}

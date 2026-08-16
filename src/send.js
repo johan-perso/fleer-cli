@@ -4,8 +4,8 @@ import boxen from "boxen"
 import { filesize } from "filesize"
 import path from "node:path"
 import { lstat, readdir } from "node:fs/promises"
-import { stripVTControlCharacters as stripAnsi } from "node:util"
 
+import { stripForDisplay } from "./utils/stripText.js"
 import getAbsoluteLowest from "./utils/absoluteLowest.js"
 import reduceString from "./utils/reduceString.js"
 import doubleCheckPaths from "./utils/doubleCheckPaths.js"
@@ -245,7 +245,7 @@ export default async function () {
 			totalSize: totalSizeBytes
 		}),
 	}).catch(error => {
-		displayFatalError(`Could not reach the relay server at ${chalk.cyan(stripAnsi(relayServerUrl))}.\n  Error: ${error.message}`, spinner)
+		displayFatalError(`Could not reach the relay server at ${chalk.cyan(stripForDisplay(relayServerUrl))}.\n  Error: ${error.message}`, spinner)
 	})
 	var shareCreationJson
 	try {
@@ -255,11 +255,11 @@ export default async function () {
 		displayFatalError(`Could not parse the response from the relay server.\n  HTTP Code: ${responseStatusCode}\n  Error: ${error.message}`, spinner)
 	}
 	if(shareCreationJson?.error) {
-		displayFatalError(`Relay server threw an error (${chalk.dim(stripAnsi(shareCreationJson?.data?.error || shareCreationJson?.error))}):\n  ${stripAnsi(shareCreationJson?.data?.message || shareCreationJson?.message || JSON.stringify(shareCreationJson))}.`, spinner)
+		displayFatalError(`Relay server threw an error (${chalk.dim(stripForDisplay(shareCreationJson?.data?.error || shareCreationJson?.error))}):\n  ${stripForDisplay(shareCreationJson?.data?.message || shareCreationJson?.message || JSON.stringify(shareCreationJson))}.`, spinner)
 	}
 	logDebugPerformance("shareCreation!")
 	const shareId = shareCreationJson?.data?.shareId
-	spinner.succeed(`Transfer created successfully. ${chalk.dim(`(Share ID: ${chalk.cyan(stripAnsi(shareId))})`)}`)
+	spinner.succeed(`Transfer created successfully. ${chalk.dim(`(Share ID: ${chalk.cyan(stripForDisplay(shareId))})`)}`)
 
 	// Create, encrypt and send the primary details to the server
 	spinner.start("Sending transfer details...")
@@ -307,7 +307,7 @@ export default async function () {
 		displayFatalError(`Could not parse the response from the relay server while sending the primary details.\n  HTTP Code: ${responseStatusCode}\n  Error: ${error.message}`, spinner)
 	}
 	if(sendPrimaryDetailsJson?.error) {
-		displayFatalError(`Relay server threw an error (${chalk.dim(stripAnsi(sendPrimaryDetailsJson?.data?.error || sendPrimaryDetailsJson?.error))}):\n  ${stripAnsi(sendPrimaryDetailsJson?.data?.message || sendPrimaryDetailsJson?.message || JSON.stringify(sendPrimaryDetailsJson))}.`, spinner)
+		displayFatalError(`Relay server threw an error (${chalk.dim(stripForDisplay(sendPrimaryDetailsJson?.data?.error || sendPrimaryDetailsJson?.error))}):\n  ${stripForDisplay(sendPrimaryDetailsJson?.data?.message || sendPrimaryDetailsJson?.message || JSON.stringify(sendPrimaryDetailsJson))}.`, spinner)
 	}
 	logDebugPerformance("Sent primaryDetails!")
 
@@ -381,7 +381,7 @@ export default async function () {
 		if (lastEventType === message?.type && !["allowedBytesMaxUpdate", "msgFromReceiver", "receiverStatus"].includes(message?.type)) {
 			lastEventCount++
 			if (lastEventCount > 30) {
-				lastSocketWarning = `Received ${lastEventCount} consecutive messages of type: ${stripAnsi(message?.type)}. Slowing down the processing...`
+				lastSocketWarning = `Received ${lastEventCount} consecutive messages of type: ${stripForDisplay(message?.type)}. Slowing down the processing...`
 				await new Promise(resolve => setTimeout(resolve, (lastEventCount * 25) > 10_000 ? 10_000 : lastEventCount * 25)) // wait a bit to avoid spamming the console
 			}
 		} else {
@@ -394,11 +394,11 @@ export default async function () {
 			spinner.text = `Establishing real-time connection to the relay server... ${chalk.dim("(Connected)")}`
 			break
 		case "error": // connection is not closed, act as a warning
-			lastSocketWarning = stripAnsi(`${message?.data?.error || message?.error} - ${message?.data?.message || message?.message || JSON.stringify(message)}`)
+			lastSocketWarning = stripForDisplay(`${message?.data?.error || message?.error} - ${message?.data?.message || message?.message || JSON.stringify(message)}`)
 			_updateFilesSendingSpinner()
 			break
 		case "fatal": // connection is closed afterwards
-			displayFatalError(`Relay server threw an error (${chalk.dim(stripAnsi(message?.data?.error || message?.error))}):\n  ${stripAnsi(message?.data?.message || message?.message || JSON.stringify(message))}.`, spinner)
+			displayFatalError(`Relay server threw an error (${chalk.dim(stripForDisplay(message?.data?.error || message?.error))}):\n  ${stripForDisplay(message?.data?.message || message?.message || JSON.stringify(message))}.`, spinner)
 			break
 		case "connectedToShare":
 			if(!isConnectedToShareDisplayedOnce) spinner.succeed("Real-time connection established. Ready to send files.")
@@ -409,7 +409,7 @@ export default async function () {
 
 			console.log() // line break
 			console.log(boxen(
-				`Start downloading files from any Fleer-compatible app using one of${process.stdout.columns >= 80 ? "\n" : " "}the following methods (use ${chalk.dim("fleer help-download")} for more details).\n\n • ${chalk.bold("Share Link")}${shouldJumpLine ? "\n   " : "      "}${chalk.cyan(stripAnsi(shareLink))}\n • ${chalk.bold("Via Fleer CLI")}${shouldJumpLine ? "\n   " : "   "}${chalk.cyan(`fleer d ${stripAnsi(shareLink)}`)}\n\n • ${chalk.bold("Using Keys")}      Share Key: ${chalk.cyan(stripAnsi(shareId))}   Encryption: ${chalk.cyan(`${stripAnsi(encryption.USED_PROTOCOL_INDICATOR.toString())}.${stripAnsi(cipher.shortKey)}`)}\n ${chalk.dim("(for experts)")}     Relay Server: ${chalk.cyan(stripAnsi(relayServerUrl))}`,
+				`Start downloading files from any Fleer-compatible app using one of${process.stdout.columns >= 80 ? "\n" : " "}the following methods (use ${chalk.dim("fleer help-download")} for more details).\n\n • ${chalk.bold("Share Link")}${shouldJumpLine ? "\n   " : "      "}${chalk.cyan(stripForDisplay(shareLink))}\n • ${chalk.bold("Via Fleer CLI")}${shouldJumpLine ? "\n   " : "   "}${chalk.cyan(`fleer d ${stripForDisplay(shareLink)}`)}\n\n • ${chalk.bold("Using Keys")}      Share Key: ${chalk.cyan(stripForDisplay(shareId))}   Encryption: ${chalk.cyan(`${stripForDisplay(encryption.USED_PROTOCOL_INDICATOR.toString())}.${stripForDisplay(cipher.shortKey)}`)}\n ${chalk.dim("(for experts)")}     Relay Server: ${chalk.cyan(stripForDisplay(relayServerUrl))}`,
 				{ padding: 1, borderStyle: "round", borderColor: "cyan" }
 			))
 			console.log() // line break
@@ -472,7 +472,7 @@ export default async function () {
 			lastUploadedBytes = 0
 			mbpsHistory.length = 0
 
-			lastSocketWarning = `Transfer was interrupted and needs to be restarted (${chalk.dim(stripAnsi(message?.data?.message || "unknown reason"))}).`
+			lastSocketWarning = `Transfer was interrupted and needs to be restarted (${chalk.dim(stripForDisplay(message?.data?.message || "unknown reason"))}).`
 			_updateFilesSendingSpinner()
 
 			if(!isSendingProcessEnded) while (!isSendingProcessInterrupted) {
@@ -689,7 +689,7 @@ export default async function () {
 					currentFileChunkIndex--
 					continue
 				} else if(responseJson?.error) {
-					displayFatalError(`Relay server threw an error (${chalk.dim(stripAnsi(responseJson?.data?.error || responseJson?.error))}):\n  ${stripAnsi(responseJson?.data?.message || responseJson?.message || JSON.stringify(responseJson))}.`, spinner)
+					displayFatalError(`Relay server threw an error (${chalk.dim(stripForDisplay(responseJson?.data?.error || responseJson?.error))}):\n  ${stripForDisplay(responseJson?.data?.message || responseJson?.message || JSON.stringify(responseJson))}.`, spinner)
 				}
 
 				// We sent the chunk successfully, so we can update displayed spinner accordingly
