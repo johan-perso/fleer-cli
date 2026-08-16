@@ -18,7 +18,9 @@ import checkRelayAccess from "./utils/checkRelayAccess.js"
 import SocketQueue from "./utils/socketQueue.js"
 import { logDebugPerformance, saveDebugPerformances, appendSocketDebugEvent } from "./utils/debugPerformances.js"
 import checkNonTlsConnection from "./utils/checkNonTlsConnection.js"
+import sanitizePath from "./utils/sanitizePath.js"
 
+// TODO: display received path in console
 const supportedProtocolVersions = [1]
 const maxErrorsCount = 20
 
@@ -161,7 +163,7 @@ export default async function () {
 	var totalSizeBytes = shareDetailsJson?.data?.totalSize || 0
 	var lastReceivedChunkIndex = -1
 
-	const saveDirectory = "./received_files" // TODO: place in ~/Downloads on macOS if folder exists, similar on Windows, in other case (linux or non-existing folders) ~/FleerDownloads
+	const saveDirectory = "./received_files" // TODO: place in the current folder
 	if (!await exists(saveDirectory)) await mkdir(saveDirectory, { recursive: true })
 
 	let writingChunks = {}
@@ -349,8 +351,7 @@ export default async function () {
 		const view = new DataView(event.data)
 		const frameType = view.getUint8(0) // 1st byte indicates the frame type (0 = file chunk)
 		if (frameType !== 0) {
-			displayFatalError(`Relay server sent an unknown binary frame via WebSocket.\nThis is likely due to a misconfiguration or an unsupported relay server, and the transfer cannot continue on this client.\nPlease contact the relay server administrator for further assistance.\n${chalk.dim(`frameType: ${chalk.cyan(frameType)} ; receivedBytesFromRelay: ${chalk.cyan(receivedBytesFromRelay)} ; totalSizeBytes: ${chalk.cyan(totalSizeBytes)}`)}`, spinner)
-			process.exit(1)
+			return displayFatalError(`Relay server sent an unknown binary frame via WebSocket.\nThis is likely due to a misconfiguration or an unsupported relay server, and the transfer cannot continue on this client.\nPlease contact the relay server administrator for further assistance.\n${chalk.dim(`frameType: ${chalk.cyan(frameType)} ; receivedBytesFromRelay: ${chalk.cyan(receivedBytesFromRelay)} ; totalSizeBytes: ${chalk.cyan(totalSizeBytes)}`)}`, spinner)
 		}
 
 		const index = view.getUint32(1, false) // 2nd to 5th bytes indicate the chunk index (big-endian)
@@ -367,14 +368,16 @@ export default async function () {
 		const fileForChunk = getFileForChunk(index)
 		// console.log(`Chunk ${index} belongs to file: ${fileForChunk ? fileForChunk.path : "unknown"}`)
 		if (!fileForChunk) {
-			displayFatalError(`Could not find any file associated to chunk ${chalk.cyan(`#${index}`)}.\nThis is likely due to a problem with the sender client that didn't told us about this chunk, or the relay server that didn't forwarded the correct information.`, spinner)
-			process.exit(1)
+			return displayFatalError(`Could not find any file associated to chunk ${chalk.cyan(`#${index}`)}.\nThis is likely due to a problem with the sender client that didn't told us about this chunk, or the relay server that didn't forwarded the correct information.`, spinner)
 		} else {
-			const savePath = path.join(saveDirectory, fileForChunk.path)
-			// TODO: path traversal detection, to avoid writing outside of the saveDirectory
+			var savePath = null
+			try {
+				savePath = sanitizePath(saveDirectory, fileForChunk.path)
+			} catch (error) {
+				return displayFatalError(`Could not determine a valid save path for chunk ${chalk.cyan(`#${index}`)}.\nThis is likely due to a problem with the sender client that didn't sent us valid informations about this chunk.\nError: ${error?.message || error?.stack}`, spinner)
+			}
 			if (!savePath) {
-				displayFatalError(`Could not determine a valid save path for chunk ${chalk.cyan(`#${index}`)}.\nThis is likely due to a problem with the sender client that didn't told us about this chunk, or the relay server that didn't forwarded the correct information.`, spinner)
-				process.exit(1)
+				return displayFatalError(`Could not determine a valid save path for chunk ${chalk.cyan(`#${index}`)}.\nThis is likely due to a problem with the sender client that didn't told us about this chunk, or the relay server that didn't forwarded the correct information.`, spinner)
 			}
 
 			try {
@@ -382,6 +385,7 @@ export default async function () {
 				if(!writingChunks[fileForChunk.path]) {
 					currentFileDownloadingBytes = 0
 					if (!await exists(path.dirname(savePath))) await mkdir(path.dirname(savePath), { recursive: true })
+					// TODO: check if the file already exists, and if so, ask the user if they want to overwrite it or rename it
 					writingChunks[fileForChunk.path] = await Bun.file(savePath, { create: true }).writer({ highWaterMark: 100 * 1024 * 1024 })
 				}
 
@@ -396,8 +400,7 @@ export default async function () {
 				currentFileDownloadingBytes += plain.length
 				_updateFilesDownloadingSpinner()
 			} catch (error) {
-				displayFatalError(`Could not write chunk ${chalk.cyan(`#${index}`)} to "${chalk.cyan(savePath)}".\nThis is likely due to a problem with the local file system or permissions.\nError: ${error?.message || error?.stack}`, spinner)
-				process.exit(1)
+				return displayFatalError(`Could not write chunk ${chalk.cyan(`#${index}`)} to "${chalk.cyan(savePath)}".\nThis is likely due to a problem with the local file system or permissions.\nError: ${error?.message || error?.stack}`, spinner)
 			}
 		}
 
@@ -455,6 +458,7 @@ export default async function () {
 		spinner.succeed(_updateFilesDownloadingSpinner())
 
 		// TODO: take structure (in primaryDetails) and create folders if needed to have the same exact structure
+		// TODO: we also use the structure to check if we have already existing files, to ask the user about overwriting/renaming them before downloading them
 
 		socket.send(JSON.stringify({
 			type: "SendMsgToOtherWay",
