@@ -2,6 +2,7 @@ import chalk from "chalk"
 import ora from "ora"
 import { filesize } from "filesize"
 import path from "node:path"
+import { homedir } from "node:os"
 import { mkdir, exists } from "node:fs/promises"
 
 import { stripForDisplay } from "./utils/stripText.js"
@@ -162,7 +163,7 @@ export default async function () {
 	var totalSizeBytes = shareDetailsJson?.data?.totalSize || 0
 	var lastReceivedChunkIndex = -1
 
-	const saveDirectory = "./received_files" // TODO: place in the current folder
+	const saveDirectory = "./"
 	if (!await exists(saveDirectory)) await mkdir(saveDirectory, { recursive: true })
 
 	let writingChunks = {}
@@ -209,10 +210,17 @@ export default async function () {
 			const totalTime = Math.round((endedDownloadTime - startDownloadingTime) / 1000)
 			newText += `\n  Took ${chalk.cyan(totalTime > 300 ? `${Math.floor(totalTime / 60)} min ${totalTime % 60} sec` : `${totalTime} sec`)} for ${chalk.cyan(filesize(receivedBytesFromRelay))}.`
 
-			const displayedSaveDirectory = path.relative(process.cwd(), saveDirectory).startsWith("..")
-				? path.resolve(saveDirectory)
-				: path.join(path.basename(process.cwd()), path.relative(process.cwd(), saveDirectory))
-			newText += `\n  Files saved to ${chalk.cyan(stripForDisplay(displayedSaveDirectory))}`
+			const homeDir = homedir()
+			const relativeSaveDirectory = path.relative(process.cwd(), saveDirectory)
+			const relativeToHome = path.relative(homeDir, saveDirectory)
+
+			const displayedSaveDirectory = !relativeToHome.startsWith("..")
+				? path.join("~", relativeToHome)
+				: relativeSaveDirectory.startsWith("..")
+					? path.resolve(saveDirectory)
+					: path.join(path.basename(process.cwd()), relativeSaveDirectory)
+
+			newText += `\n  File${filesCount > 1 ? "s" : ""} saved to ${chalk.cyan(stripForDisplay(displayedSaveDirectory))}`
 		} else {
 			var totalPercentage = totalSizeBytes > 0 ? Math.floor((receivedBytesFromRelay / totalSizeBytes) * 100) : 0
 			if (totalPercentage > 99.9) totalPercentage = 100

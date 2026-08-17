@@ -1,6 +1,7 @@
+import { stripForDisplay } from "./stripText.js"
+
 import chalk from "chalk"
 import path from "node:path"
-import { stripForDisplay } from "./stripText.js"
 
 const windowsForbiddenChars = /[<>:"/\\|?*\x00-\x1F]/
 const windowsReservedNames = /^(?:con|prn|aux|nul|conin\$|conout\$|com[0-9¹²³]|lpt[0-9¹²³])(?:\..*)?$/iu
