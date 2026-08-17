@@ -40,7 +40,7 @@ async function cliCleanup(isUserInitiated = false) {
 		globalThis.spinner.fail()
 	}
 
-	process.exit(130) // 130 = signal code for SIGINT (Ctrl+C)
+	process.exit(0)
 }
 
 function showHelp(){

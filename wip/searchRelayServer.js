@@ -5,7 +5,7 @@ import reduceString from "../src/utils/reduceString.js"
 
 process.stdin.on("data", (data) => {
 	if (data.toString() === "\x03") {
-		process.exit(130) // 130 = signal code for SIGINT (Ctrl+C)
+		process.exit(0)
 	}
 })
 async function main() {
