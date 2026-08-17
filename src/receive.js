@@ -20,7 +20,6 @@ import { logDebugPerformance, saveDebugPerformances, appendSocketDebugEvent } fr
 import checkNonTlsConnection from "./utils/checkNonTlsConnection.js"
 import sanitizePath from "./utils/sanitizePath.js"
 
-// TODO: display received path in console
 const supportedProtocolVersions = [1]
 const maxErrorsCount = 20
 
@@ -209,6 +208,11 @@ export default async function () {
 		if(isDownloadingProcessEnded) {
 			const totalTime = Math.round((endedDownloadTime - startDownloadingTime) / 1000)
 			newText += `\n  Took ${chalk.cyan(totalTime > 300 ? `${Math.floor(totalTime / 60)} min ${totalTime % 60} sec` : `${totalTime} sec`)} for ${chalk.cyan(filesize(receivedBytesFromRelay))}.`
+
+			const displayedSaveDirectory = path.relative(process.cwd(), saveDirectory).startsWith("..")
+				? path.resolve(saveDirectory)
+				: path.join(path.basename(process.cwd()), path.relative(process.cwd(), saveDirectory))
+			newText += `\n  Files saved to ${chalk.cyan(stripForDisplay(displayedSaveDirectory))}`
 		} else {
 			var totalPercentage = totalSizeBytes > 0 ? Math.floor((receivedBytesFromRelay / totalSizeBytes) * 100) : 0
 			if (totalPercentage > 99.9) totalPercentage = 100
