@@ -18,6 +18,7 @@ import checkRelayAccess from "./utils/checkRelayAccess.js"
 import SocketQueue from "./utils/socketQueue.js"
 import { logDebugPerformance, saveDebugPerformances, appendSocketDebugEvent } from "./utils/debugPerformances.js"
 import checkNonTlsConnection from "./utils/checkNonTlsConnection.js"
+import copyToClipboard from "./utils/copyToClipboard.js"
 
 var relayServerUrl = "http://192.168.1.174:8080/"
 const CHUNK_SIZE = 2 * 1024 * 1024 // 2 MiB
@@ -407,9 +408,11 @@ export default async function () {
 			const shareLink = `${relayServerUrl}/d/${shareId}#${encryption.USED_PROTOCOL_INDICATOR}.${cipher.shortKey}`
 			const shouldJumpLine = shareLink.length > 80 || (`fleer d ${shareLink}`).length > (process.stdout.columns / 1.5)
 
+			const copiedResult = await copyToClipboard(shareLink)
+
 			console.log() // line break
 			console.log(boxen(
-				`Start downloading files from any Fleer-compatible app using one of${process.stdout.columns >= 80 ? "\n" : " "}the following methods (use ${chalk.dim("fleer help-download")} for more details).\n\n • ${chalk.bold("Share Link")}${shouldJumpLine ? "\n   " : "      "}${chalk.cyan(stripForDisplay(shareLink))}\n • ${chalk.bold("Via Fleer CLI")}${shouldJumpLine ? "\n   " : "   "}${chalk.cyan(`fleer d ${stripForDisplay(shareLink)}`)}\n\n • ${chalk.bold("Using Keys")}      Share Key: ${chalk.cyan(stripForDisplay(shareId))}   Encryption: ${chalk.cyan(`${stripForDisplay(encryption.USED_PROTOCOL_INDICATOR.toString())}.${stripForDisplay(cipher.shortKey)}`)}\n ${chalk.dim("(for experts)")}     Relay Server: ${chalk.cyan(stripForDisplay(relayServerUrl))}`,
+				`Start downloading files from any Fleer-compatible app using one of${process.stdout.columns >= 80 ? "\n" : " "}the following methods (use ${chalk.dim("fleer help-download")} for more details).\n\n • ${copiedResult?.status == true ? "📋 " : ""}${chalk.bold("Share Link")}${shouldJumpLine ? "\n   " : "      "}${chalk.cyan(stripForDisplay(shareLink))}\n • ${chalk.bold("Via Fleer CLI")}${shouldJumpLine ? "\n   " : "   "}${chalk.cyan(`fleer d ${stripForDisplay(shareLink)}`)}\n\n • ${chalk.bold("Using Keys")}      Share Key: ${chalk.cyan(stripForDisplay(shareId))}   Encryption: ${chalk.cyan(`${stripForDisplay(encryption.USED_PROTOCOL_INDICATOR.toString())}.${stripForDisplay(cipher.shortKey)}`)}\n ${chalk.dim("(for experts)")}     Relay Server: ${chalk.cyan(stripForDisplay(relayServerUrl))}`,
 				{ padding: 1, borderStyle: "round", borderColor: "cyan" }
 			))
 			console.log() // line break
@@ -595,7 +598,7 @@ export default async function () {
 			currentFileSentBytes = 0
 			currentChunkSentBytes = 0
 			_updateFilesSendingSpinner()
-
+			// TODO: auto copy share link to clipboard (ez to type "fleer d " and then cmd+v in terminal)
 			// Send infos about this file to the relay server, this allows the receiver to know where to save the chunks he's about to receive
 			if(!_checkIfSendingProcessIsStillValid(sendingProcessId)) return
 			logDebugPerformance(`${file.virtualPath}: sending FileChunks info to relay server`)
