@@ -437,7 +437,7 @@ export default async function () {
 	function registerChunkForFile(socketMessage) {
 		const existing = fileChunksCorrelationTable.find(r => r.from === socketMessage.from)
 		if (existing) return // already registered
-		fileChunksCorrelationTable.push({ from: socketMessage.from, name: socketMessage.name, size: socketMessage.size, path: socketMessage.path })
+		fileChunksCorrelationTable.push({ from: socketMessage.from, name: path.basename(socketMessage.path), size: socketMessage.size, path: socketMessage.path })
 		fileChunksCorrelationTable.sort((a, b) => a.from - b.from) // keep the list sorted by 'from' index
 
 		// The sender is free to send us more files than what was initially told to us
