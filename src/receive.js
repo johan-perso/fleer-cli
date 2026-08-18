@@ -286,7 +286,7 @@ export default async function () {
 				socket.send(JSON.stringify({ type: "GetPrecedentsChunks", data: { fromChunkId: lastReceivedChunkIndex + 1, untilChunkId: lastReceivedChunkIndex + 4 } })) // still asking for max 3 chunks at a time
 			} else {
 				// The server will automatically send us new chunks as they are sent to the server, as soon as we acknowledge what we just got here
-				if (lastReceivedChunkIndex >= lastChunkId) finishDownload()
+				if (lastChunkId != null && lastReceivedChunkIndex >= lastChunkId) finishDownload()
 			}
 			break
 		case "msgFromSender":

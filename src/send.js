@@ -475,14 +475,14 @@ export default async function () {
 			lastUploadedBytes = 0
 			mbpsHistory.length = 0
 
-			lastSocketWarning = `Transfer was interrupted and needs to be restarted (${chalk.dim(stripForDisplay(message?.data?.message || "unknown reason"))}).`
+			lastSocketWarning = "Transfer was interrupted and is restarting..."
 			_updateFilesSendingSpinner()
 
 			if(!isSendingProcessEnded) while (!isSendingProcessInterrupted) {
 				await new Promise(resolve => setTimeout(resolve, 500))
 			}
 			isSendingProcessEnded = true
-			lastSocketWarning = "Transfer was interrupted and had to be restarted."
+			lastSocketWarning = `Transfer was interrupted and needs to be restarted (${chalk.dim(stripForDisplay(message?.data?.message || "unknown reason"))}).`
 			_updateFilesSendingSpinner()
 
 			sendFiles()
