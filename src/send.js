@@ -412,7 +412,7 @@ export default async function () {
 
 			console.log() // line break
 			console.log(boxen(
-				`Start downloading files from any Fleer-compatible app using one of${process.stdout.columns >= 80 ? "\n" : " "}the following methods (use ${chalk.dim("fleer help-download")} for more details).\n\n • ${copiedResult?.status == true ? "📋 " : ""}${chalk.bold("Share Link")}${shouldJumpLine ? "\n   " : "      "}${chalk.cyan(stripForDisplay(shareLink))}\n • ${chalk.bold("Via Fleer CLI")}${shouldJumpLine ? "\n   " : "   "}${chalk.cyan(`fleer d ${stripForDisplay(shareLink)}`)}\n\n • ${chalk.bold("Using Keys")}      Share Key: ${chalk.cyan(stripForDisplay(shareId))}   Encryption: ${chalk.cyan(`${stripForDisplay(encryption.USED_PROTOCOL_INDICATOR.toString())}.${stripForDisplay(cipher.shortKey)}`)}\n ${chalk.dim("(for experts)")}     Relay Server: ${chalk.cyan(stripForDisplay(relayServerUrl))}`,
+				`Start downloading files from any Fleer-compatible app using one of${process.stdout.columns >= 80 ? "\n" : " "}the following methods (use ${chalk.dim("fleer help-download")} for more details).\n\n • ${copiedResult?.status ? "📋 " : ""}${chalk.bold("Share Link")}${shouldJumpLine ? "\n   " : "      ".substring(0, copiedResult?.status ? "📋 ".length : undefined)}${chalk.cyan(stripForDisplay(shareLink))}\n • ${chalk.bold("Via Fleer CLI")}${shouldJumpLine ? "\n   " : "   "}${chalk.cyan(`fleer d ${stripForDisplay(shareLink)}`)}\n\n • ${chalk.bold("Using Keys")}      Share Key: ${chalk.cyan(stripForDisplay(shareId))}   Encryption: ${chalk.cyan(`${stripForDisplay(encryption.USED_PROTOCOL_INDICATOR.toString())}.${stripForDisplay(cipher.shortKey)}`)}\n ${chalk.dim("(for experts)")}     Relay Server: ${chalk.cyan(stripForDisplay(relayServerUrl))}`,
 				{ padding: 1, borderStyle: "round", borderColor: "cyan" }
 			))
 			console.log() // line break
@@ -598,7 +598,7 @@ export default async function () {
 			currentFileSentBytes = 0
 			currentChunkSentBytes = 0
 			_updateFilesSendingSpinner()
-			// TODO: auto copy share link to clipboard (ez to type "fleer d " and then cmd+v in terminal)
+
 			// Send infos about this file to the relay server, this allows the receiver to know where to save the chunks he's about to receive
 			if(!_checkIfSendingProcessIsStillValid(sendingProcessId)) return
 			logDebugPerformance(`${file.virtualPath}: sending FileChunks info to relay server`)
@@ -608,7 +608,6 @@ export default async function () {
 					highPriority: true,
 					dataType: "FileChunks",
 					from: virtualChunkIndex,
-					name: path.basename(file.name),
 					size: file.size,
 					path: file.virtualPath
 				})
