@@ -235,6 +235,45 @@ export default async function () {
 		return newText
 	}
 
+	// Calculate the average Mb/s over the last few chunks sent
+	let lastMbpsCheck = performance.now()
+	let lastReceivedBytes = 0
+	const mbpsHistory = []
+	const MBPS_HISTORY_SIZE = 8
+	function _calculateMbps() {
+		if (lastReceivedBytes === receivedBytesFromRelay) return // no new bytes received since last check
+		if (performance.now() - lastMbpsCheck < 100) return // avoid calculating if we already did it less than 100ms ago
+
+		if (receivedBytesFromRelay < lastReceivedBytes) {
+			// This should not happen, but just in case, we reset the values
+			lastMbpsCheck = performance.now()
+			lastReceivedBytes = receivedBytesFromRelay
+			return
+		}
+		if (receivedBytesFromRelay === 0) {
+			mbps = 0
+			mbpsEmoji = "📈"
+			return
+		}
+
+		const now = performance.now()
+		const elapsedSeconds = (now - lastMbpsCheck) / 1000
+		const sentBytes = receivedBytesFromRelay - lastReceivedBytes
+		const newMbps = (sentBytes / 1_000_000) / elapsedSeconds // in MB/s
+
+		mbpsHistory.push(newMbps)
+		if (mbpsHistory.length > MBPS_HISTORY_SIZE) {
+			mbpsHistory.shift()
+		}
+		const averageMbps = mbpsHistory.reduce((sum, value) => sum + value, 0) / mbpsHistory.length
+
+		mbpsEmoji = averageMbps < mbps ? "📉" : "📈"
+		mbps = averageMbps
+
+		lastMbpsCheck = now
+		lastReceivedBytes = receivedBytesFromRelay
+	}
+
 	// Method to handle incoming JSON WebSocket messages
 	async function handleJsonSocketMessage(message) {
 		// Avoid spamming the console if server keep sending the same msg
@@ -331,7 +370,8 @@ export default async function () {
 
 			mbps = 0
 			mbpsEmoji = "📈"
-			// mbpsHistory.length = 0 // TODO: display downloading speed
+			lastReceivedBytes = 0
+			mbpsHistory.length = 0
 
 			writingChunks = {}
 			fileChunksCorrelationTable.length = 0
@@ -364,6 +404,7 @@ export default async function () {
 
 		const index = view.getUint32(1, false) // 2nd to 5th bytes indicate the chunk index (big-endian)
 		lastReceivedChunkIndex = index
+		if(index > 1) _calculateMbps()
 		const payload = new Uint8Array(event.data, 5) // The rest is the chunk payload
 
 		// Decrypt, and save this chunk to the correct file
@@ -410,6 +451,8 @@ export default async function () {
 			} catch (error) {
 				return displayFatalError(`Could not write chunk ${chalk.cyan(`#${index}`)} to "${chalk.cyan(savePath)}".\nThis is likely due to a problem with the local file system or permissions.\nError: ${error?.message || error?.stack}`, spinner)
 			}
+
+			_calculateMbps()
 		}
 
 		// If we finished processing the last file, end its associated file stream writer to free up memory
