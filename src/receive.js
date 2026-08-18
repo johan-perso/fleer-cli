@@ -22,7 +22,6 @@ import checkNonTlsConnection from "./utils/checkNonTlsConnection.js"
 import sanitizePath from "./utils/sanitizePath.js"
 
 const supportedProtocolVersions = [1]
-const maxErrorsCount = 20
 
 const intlFormatter = new Intl.NumberFormat()
 
@@ -283,14 +282,11 @@ export default async function () {
 			socket.send(JSON.stringify({ type: "GetPrecedentsChunks", data: { fromChunkId: 0, untilChunkId: 3 } })) // max 3 chunks at a time
 			break
 		case "precedentsChunksUpdate":
-			// console.log(`Server says there are ${message.data.remaining} chunks remaining to be sent to us.`)
 			if (message.data.remaining > 0) {
-				// console.log("Asking server for more chunks...")
-				// console.log(`asking chunks until ${lastReceivedChunkIndex + 4} (last received: ${lastReceivedChunkIndex})`)
 				socket.send(JSON.stringify({ type: "GetPrecedentsChunks", data: { fromChunkId: lastReceivedChunkIndex + 1, untilChunkId: lastReceivedChunkIndex + 4 } })) // still asking for max 3 chunks at a time
 			} else {
-				// console.log("All chunks that have been sent to the server before we connected have been received.")
-			// The server will automatically send us new chunks as they are sent to the server, as soon as we acknowledge what we just got here
+				// The server will automatically send us new chunks as they are sent to the server, as soon as we acknowledge what we just got here
+				if (lastReceivedChunkIndex >= lastChunkId) finishDownload()
 			}
 			break
 		case "msgFromSender":
