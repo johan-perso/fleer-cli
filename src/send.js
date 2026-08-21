@@ -2,8 +2,10 @@ import chalk from "chalk"
 import ora from "ora"
 import boxen from "boxen"
 import { filesize } from "filesize"
+import QRCode from "qrcode"
 import path from "node:path"
 import { lstat, readdir } from "node:fs/promises"
+import { tmpdir } from "node:os"
 
 import { stripForDisplay } from "./utils/stripText.js"
 import getAbsoluteLowest from "./utils/absoluteLowest.js"
@@ -407,10 +409,14 @@ export default async function () {
 			const shouldJumpLine = shareLink.length > 80 || (`fdd ${shareLink}`).length > (process.stdout.columns / 1.5)
 
 			const copiedResult = await copyToClipboard(shareLink)
+			const spaceAfterShareLink = shouldJumpLine ? "\n   " : " ".repeat(7 - (copiedResult?.status ? "📋 ".length : 0))
+
+			const randomQrId = Math.random().toString(36).substring(2, 6)
+			await QRCode.toFile(path.join(tmpdir(), `fleer_qrlink_${randomQrId.toLowerCase()}.png`), shareLink, { type: "png", scale: 14, })
 
 			console.log() // line break
 			console.log(boxen(
-				`Start downloading files from any Fleer-compatible app using one of${process.stdout.columns >= 80 ? "\n" : " "}the following methods (use ${chalk.dim("fleer help-download")} for more details).\n\n • ${copiedResult?.status ? "📋 " : ""}${chalk.bold("Share Link")}${shouldJumpLine ? "\n   " : "      ".substring(0, copiedResult?.status ? "📋 ".length : undefined)}${chalk.cyan(stripForDisplay(shareLink))}\n • ${chalk.bold("Via Fleer CLI")}${shouldJumpLine ? "\n   " : "   "}${chalk.cyan(`fdd ${stripForDisplay(shareLink)}`)}\n\n • ${chalk.bold("Using Keys")}      Share Key: ${chalk.cyan(stripForDisplay(shareId))}   Encryption: ${chalk.cyan(`${stripForDisplay(encryption.USED_PROTOCOL_INDICATOR.toString())}.${stripForDisplay(cipher.shortKey)}`)}\n ${chalk.dim("(for experts)")}     Relay Server: ${chalk.cyan(stripForDisplay(relayServerUrl))}`,
+				`Start downloading files from any Fleer-compatible app using one of${process.stdout.columns >= 80 ? "\n" : " "}the following methods (use ${chalk.dim("fleer help-download")} for more details).\n\n • ${copiedResult?.status ? "📋 " : ""}${chalk.bold("Share Link")}${spaceAfterShareLink}${chalk.cyan(stripForDisplay(shareLink))}\n • ${chalk.bold("Via Fleer CLI")}${shouldJumpLine ? "\n   " : "    "}${chalk.cyan(`fdd ${stripForDisplay(shareLink)}`)}\n • ${chalk.bold("Display QR Code")}${shouldJumpLine ? "\n   " : "  "}${chalk.cyan(`fleer qr ${randomQrId.toUpperCase()}`)}\n\n • ${chalk.bold("Using Keys")}       Share Key: ${chalk.cyan(stripForDisplay(shareId))}   Encryption: ${chalk.cyan(`${stripForDisplay(encryption.USED_PROTOCOL_INDICATOR.toString())}.${stripForDisplay(cipher.shortKey)}`)}\n ${chalk.dim("(for experts)")}      Relay Server: ${chalk.cyan(stripForDisplay(relayServerUrl))}`,
 				{ padding: 1, borderStyle: "round", borderColor: "cyan" }
 			))
 			console.log() // line break

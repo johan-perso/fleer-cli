@@ -1,13 +1,18 @@
 #!/usr/bin/env bun
 
 import chalk from "chalk"
-
+import terminalImage from "terminal-image"
+import path from "node:path"
+import { tmpdir } from "node:os"
+import { exists } from "node:fs/promises"
 import updateNotifier from "update-notifier"
 import packageJson from "./package.json"
 
+import { stripForDisplay } from "./src/utils/stripText.js"
 import sendFiles from "./src/send.js"
 import receiveFiles from "./src/receive.js"
 import breakLines from "./src/utils/breakLines.js"
+import displayFatalError from "./src/utils/displayFatalError.js"
 import { getDebugSocketFilePath } from "./src/utils/debugPerformances.js"
 
 process.on("SIGINT", () => cliCleanup(true))
@@ -109,9 +114,30 @@ else if(defaultArgs.includes("help") || defaultArgs.includes("h") || defaultArgs
 else if(defaultArgs.includes("help-download") || defaultArgs.includes("--help-download")) showDownloadHelp()
 else if(defaultArgs.includes("send") || defaultArgs.includes("s") || defaultArgs.includes("upload") || defaultArgs.includes("u")) checkUpdate() && sendFiles()
 else if(defaultArgs.includes("receive") || defaultArgs.includes("r") || defaultArgs.includes("download") || defaultArgs.includes("d")) checkUpdate() && receiveFiles()
+else if(defaultArgs.includes("qr")) displayQrCode()
 else {
-	console.log(`Unknown command.\nUse ${chalk.cyan("fleer --help")} to see the list of available commands.`)
+	displayFatalError(`Unknown command.\nUse ${chalk.cyan("fleer --help")} to see the list of available commands.`)
 	process.exit(1)
+}
+
+async function displayQrCode() {
+	const qrId = defaultArgs.slice(defaultArgs.indexOf("qr") + 1)[0]
+	if(!qrId) {
+		displayFatalError(`Missing QR code identifier in parameter.\nSend a file using ${chalk.cyan("fleer send <file_path>")} to get an identifier.\nThen, use ${chalk.cyan(`fleer qr ${chalk.bold("<qr_id>")}`)} to display the QR code.`)
+		process.exit(1)
+	}
+
+	const qrPath = path.join(tmpdir(), `fleer_qrlink_${qrId.toLowerCase()}.png`)
+	const qrExists = await exists(qrPath)
+	if(!qrExists) {
+		displayFatalError(`QR code image not found for identifier ${chalk.cyan(stripForDisplay(qrId))}.\nSend a file using ${chalk.cyan("fleer send <file_path>")} to get an identifier.\nThen, use ${chalk.cyan(`fleer qr ${chalk.bold("<qr_id>")}`)} to display the QR code.`)
+		process.exit(1)
+	}
+	console.log(`${chalk.dim("|")} QR Path: ${chalk.cyan(qrPath)}\n${chalk.dim("|")} You can open this image with your favorite image viewer to scan the QR code.\n`)
+
+	console.log(await terminalImage.file(qrPath, { preferNativeRender: true, width: process.stdout.rows > 50 || process.stdout.columns > 50 ? 50 : "50%" }))
+
+	process.exit()
 }
 
 function showDownloadHelp() {
