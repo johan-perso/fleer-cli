@@ -1,5 +1,6 @@
 import chalk from "chalk"
 import ora from "ora"
+import trash from "trash"
 import { filesize } from "filesize"
 import path from "node:path"
 import { homedir } from "node:os"
@@ -545,7 +546,11 @@ export default async function () {
 			return { continue: false, savePath }
 		} else if (overwriteAllExistingFiles || canOverwriteFilesPath.includes(fileForChunk.path)) {
 			logDebugPerformance(`Deleting existing file "${savePath}" as per user choice.`)
-			await Bun.file(savePath).delete()
+			try {
+				await trash(savePath)
+			} catch (_) {
+				await Bun.file(savePath).delete()
+			}
 			logDebugPerformance(`Deleted existing file "${savePath}" to overwrite it with the new one.`)
 			return { continue: true, savePath }
 		} else {
@@ -604,8 +609,6 @@ export default async function () {
 		endedDownloadTime = Date.now()
 		isDownloadingProcessEnded = true
 		spinner.succeed(_updateFilesDownloadingSpinner())
-
-		// TODO: take structure (in primaryDetails) and create folders if needed to have the same exact structure
 
 		socket.send(JSON.stringify({
 			type: "SendMsgToOtherWay",
