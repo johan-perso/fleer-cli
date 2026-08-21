@@ -11,7 +11,7 @@ import reduceString from "./utils/reduceString.js"
 import doubleCheckPaths from "./utils/doubleCheckPaths.js"
 import encryption from "./utils/encryption.js"
 import getDeviceName from "./utils/getDeviceName.js"
-import { askConfirmation, askIgnoreFile, askCustomText } from "./utils/tuiPrompts.js"
+import { askConfirmation, askAlreadyExistingFile, askCustomText } from "./utils/tuiPrompts.js"
 import streamWithProgress from "./utils/streamWithProgress.js"
 import displayFatalError from "./utils/displayFatalError.js"
 import displayWarning from "./utils/displayWarning.js"
@@ -20,14 +20,12 @@ import SocketQueue from "./utils/socketQueue.js"
 import { logDebugPerformance, saveDebugPerformances, appendSocketDebugEvent } from "./utils/debugPerformances.js"
 import checkNonTlsConnection from "./utils/checkNonTlsConnection.js"
 import sanitizePath from "./utils/sanitizePath.js"
+import removeLinesFromConsole from "./utils/removeLinesFromConsole.js"
+import breakLines from "./utils/breakLines.js"
 
 const supportedProtocolVersions = [1]
 
 const intlFormatter = new Intl.NumberFormat()
-
-// const ignoredPaths = []
-// var autoIgnoreDoubleCheckPaths = false
-// var disableAskingDoubleCheckPaths = false
 
 export default async function () {
 	async function askManualDetails() {
@@ -49,7 +47,7 @@ export default async function () {
 	// Get the download URL
 	const downloadUrlStr = globalThis.defaultArgs.slice(1)
 	if (downloadUrlStr.length === 0) {
-		displayFatalError(`No download URL provided.\nCancel using ${chalk.cyan("Ctrl+C")} and use ${chalk.cyan("fleer download <download_url>")} or fill out the following prompts.\nTo display more information about how Fleer works, use ${chalk.cyan("fleer help-download")}.\n\n`)
+		process.stderr.write(`${chalk.red("✖")} ${breakLines(process.stdout.columns - 2, "  ", `No download URL provided.\nCancel using ${chalk.cyan("Ctrl+C")} and use ${chalk.cyan("fleer download <download_url>")} or fill out the following prompts.\nTo display more information about how Fleer works, use ${chalk.cyan("fleer help-download")}.\n\n`, { skipPrefixFirstLine: true })}\n`)
 		const manualDetails = await askManualDetails()
 		relayUrl = manualDetails.relayUrl
 		shareKey = manualDetails.shareKey
@@ -156,6 +154,14 @@ export default async function () {
 	senderDeviceName = senderDeviceName.length > 1 && senderDeviceName.length < 65 ? stripForDisplay(senderDeviceName) : "Sender's device"
 	spinner.succeed("Encryption key is valid.")
 
+	const structure = primaryDetails?.structure || []
+	const ignoredFilesPath = []
+	const needRenamingFilesPath = []
+	const canOverwriteFilesPath = []
+	var ignoreAllExistingFiles = false
+	var overwriteAllExistingFiles = false
+	const renamedFilesPath = {}
+
 	// Initialize a few (many 💀) variables for the files downloading process
 	var filesCount = shareDetailsJson?.data?.filesCount || 0
 	var foldersCount = shareDetailsJson?.data?.foldersCount || 0
@@ -183,6 +189,7 @@ export default async function () {
 	var mbps = null
 	var mbpsEmoji = "📈"
 
+	var currentFileBeingIgnored = false
 	var currentFileDisplayName = null
 	var currentFilePosition = 1
 	var currentFileSize = 0
@@ -196,13 +203,18 @@ export default async function () {
 				? `(${mbpsEmoji} ${chalk.dim.cyan(mbps.toFixed(2))} MB/s)`
 				: "(Starting...)"
 
+		const ignoredFilesCount = ignoredFilesPath.length
+		const totalFilesReceived = (currentFilePosition || 1) - ignoredFilesCount
+
 		var newText = isDownloadingProcessEnded
-			? `Received ${chalk.cyan(intlFormatter.format(currentFilePosition || 1))} file${currentFilePosition > 1 ? "s" : ""} and ${chalk.cyan(intlFormatter.format(foldersCount))} folder${foldersCount > 1 ? "s" : ""}.`
+			? `Received ${chalk.cyan(intlFormatter.format(totalFilesReceived))} file${totalFilesReceived > 1 ? "s" : ""} and ${chalk.cyan(intlFormatter.format(foldersCount))} folder${foldersCount > 1 ? "s" : ""}.${ignoredFilesCount > 0 ? `\n  Ignored ${ignoredFilesCount} file${ignoredFilesCount > 1 ? "s" : ""}.` : ""}`
 			: `Receiving file ${chalk.cyan(intlFormatter.format(currentFilePosition || 1))} / ${chalk.cyan(intlFormatter.format(filesCount))} ${chalk.dim(downloadingStatus)}`
-		if (currentFileDisplayName && !isDownloadingProcessEnded) {
+		if (currentFileDisplayName && !currentFileBeingIgnored && !isDownloadingProcessEnded) {
 			var percentage = currentFileSize > 0 ? Math.floor((currentFileDownloadingBytes / currentFileSize) * 100) : 0
 			if (percentage > 100) percentage = 100
 			newText += `\n${chalk.cyan("◌")} ${percentage > 0 && percentage <= 9 ? "0" : ""}${percentage} %   ${chalk.dim(reduceString.maxLines(currentFileDisplayName, 1, 2 + 5 + 3))}`
+		} else if (currentFileDisplayName && currentFileBeingIgnored && !isDownloadingProcessEnded) {
+			newText += `\n${chalk.cyan("◌")} Skipping ${chalk.dim(reduceString.maxLines(currentFileDisplayName, 1, 2 + "Skipping ".length))}`
 		}
 
 		if(isDownloadingProcessEnded) {
@@ -305,13 +317,28 @@ export default async function () {
 
 			isSenderDisconnected = !(message?.data?.isSenderConnected || false)
 
+			if (structure.length > 0) {
+				spinner.start("Checking files structure...")
+				for (const file of structure) {
+					const savePath = sanitizePath(saveDirectory, file.path)
+
+					// Create directories if they don't exist
+					if (!await exists(path.dirname(savePath))) await mkdir(path.dirname(savePath), { recursive: true })
+
+					// Ask user what they want to do for existing files
+					if (!ignoreAllExistingFiles && !overwriteAllExistingFiles && await exists(savePath)) {
+						await askActionForExistingFile(savePath, file.path)
+					}
+				}
+				spinner.stop()
+			}
+
 			const confirmStartDownload = await askConfirmation("Do you want to start downloading the files now?")
 			if(!confirmStartDownload) {
 				spinner.fail("Download cancelled by user.")
 				process.exit()
 			}
-			process.stdout.moveCursor(0, -1)
-			process.stdout.clearLine(1)
+			removeLinesFromConsole(1)
 
 			startDownloadingTime = Date.now()
 			console.log() // line break
@@ -364,6 +391,7 @@ export default async function () {
 			lastChunkId = null
 
 			currentFileDownloadingBytes = 0
+			currentFileBeingIgnored = false
 			currentFileDisplayName = null
 			currentFilePosition = 1
 			currentFileSize = 0
@@ -413,15 +441,18 @@ export default async function () {
 		const plain = await cipher.decryptChunk(payload, index)
 		logDebugPerformance(`Decrypted chunk ${index} (size after decryption: ${plain.length} bytes)`)
 
-		// const t2 = performance.now()
 		const fileForChunk = getFileForChunk(index)
-		// console.log(`Chunk ${index} belongs to file: ${fileForChunk ? fileForChunk.path : "unknown"}`)
 		if (!fileForChunk) {
 			return displayFatalError(`Could not find any file associated to chunk ${chalk.cyan(`#${index}`)}.\nThis is likely due to a problem with the sender client that didn't told us about this chunk, or the relay server that didn't forwarded the correct information.`, spinner)
+		} if (ignoredFilesPath.includes(fileForChunk.path)) {
+			logDebugPerformance(`Ignoring chunk ${index} because its associated file "${fileForChunk.path}" is in the ignored files list.`)
+			currentFileDisplayName = stripForDisplay(path.basename(fileForChunk.path))
+			currentFileBeingIgnored = true
+			_updateFilesDownloadingSpinner()
 		} else {
 			var savePath = null
 			try {
-				savePath = sanitizePath(saveDirectory, fileForChunk.path)
+				savePath = renamedFilesPath[fileForChunk.path] || sanitizePath(saveDirectory, fileForChunk.path)
 			} catch (error) {
 				return displayFatalError(`Could not determine a valid save path for chunk ${chalk.cyan(`#${index}`)}.\nThis is likely due to a problem with the sender client that didn't sent us valid informations about this chunk.\nError: ${error?.message || error?.stack}`, spinner)
 			}
@@ -433,13 +464,22 @@ export default async function () {
 				logDebugPerformance(`Saving chunk ${index}...`)
 				if(!writingChunks[fileForChunk.path]) {
 					currentFileDownloadingBytes = 0
+
+					// Check what to do if the file already exists
+					if (await exists(savePath)) {
+						const actionForExistingFile = await decideActionForExistingFile(savePath, fileForChunk)
+						if (!actionForExistingFile?.continue) return
+						savePath = renamedFilesPath[fileForChunk.path] || actionForExistingFile?.savePath || savePath
+					}
+
+					// Create directories if needed, and create a file stream writer for this file
 					if (!await exists(path.dirname(savePath))) await mkdir(path.dirname(savePath), { recursive: true })
-					// TODO: check if the file already exists, and if so, ask the user if they want to overwrite it or rename it
 					writingChunks[fileForChunk.path] = await Bun.file(savePath, { create: true }).writer({ highWaterMark: 100 * 1024 * 1024 })
 				}
 
 				currentFileSize = fileForChunk.size
-				currentFileDisplayName = fileForChunk.name
+				currentFileDisplayName = stripForDisplay(path.basename(savePath))
+				currentFileBeingIgnored = false
 				_updateFilesDownloadingSpinner()
 
 				await writingChunks[fileForChunk.path].write(plain)
@@ -494,6 +534,63 @@ export default async function () {
 		return match // null if no match found, or the last matching range if found
 	}
 
+	async function decideActionForExistingFile(savePath, fileForChunk) {
+		if (needRenamingFilesPath.includes(fileForChunk.path)) {
+			savePath = await incrementFilePath(savePath)
+			renamedFilesPath[fileForChunk.path] = savePath
+			return { continue: true, savePath }
+		} else if ((ignoreAllExistingFiles && !canOverwriteFilesPath.includes(fileForChunk.path)) || ignoredFilesPath.includes(fileForChunk.path)) {
+			logDebugPerformance(`Ignoring existing file "${savePath}" as per user choice.`)
+			if(!ignoredFilesPath.includes(fileForChunk.path)) ignoredFilesPath.push(fileForChunk.path)
+			return { continue: false, savePath }
+		} else if (overwriteAllExistingFiles || canOverwriteFilesPath.includes(fileForChunk.path)) {
+			logDebugPerformance(`Deleting existing file "${savePath}" as per user choice.`)
+			await Bun.file(savePath).delete()
+			logDebugPerformance(`Deleted existing file "${savePath}" to overwrite it with the new one.`)
+			return { continue: true, savePath }
+		} else {
+			await askActionForExistingFile(savePath, fileForChunk.path)
+			return decideActionForExistingFile(savePath, fileForChunk)
+		}
+	}
+
+	async function askActionForExistingFile(savePath, filePath) {
+		spinner.stop()
+		const userChoice = await askAlreadyExistingFile(savePath)
+		removeLinesFromConsole(2)
+		spinner.start()
+
+		switch (userChoice) {
+		case "ignore":
+			ignoredFilesPath.push(filePath)
+			break
+		case "rename":
+			needRenamingFilesPath.push(filePath)
+			break
+		case "replace":
+			canOverwriteFilesPath.push(filePath)
+			break
+		case "ignoreAll":
+			ignoreAllExistingFiles = true
+			break
+		case "replaceAll":
+			overwriteAllExistingFiles = true
+			break
+		}
+	}
+
+	async function incrementFilePath(savePath) {
+		const { dir, name, ext } = path.parse(savePath)
+		let newName = `${name} (1)${ext}`
+		let counter = 1
+		while (await exists(path.join(dir, newName))) {
+			counter++
+			newName = `${name} (${counter})${ext}`
+		}
+		savePath = path.join(dir, newName)
+		return savePath
+	}
+
 	// Function that need to be called when the download is ended (all chunks received and written to disk)
 	async function finishDownload() {
 		// If we are currently saving a chunk file, we need to wait for it to finish to avoid corruption,
@@ -509,7 +606,6 @@ export default async function () {
 		spinner.succeed(_updateFilesDownloadingSpinner())
 
 		// TODO: take structure (in primaryDetails) and create folders if needed to have the same exact structure
-		// TODO: we also use the structure to check if we have already existing files, to ask the user about overwriting/renaming them before downloading them
 
 		socket.send(JSON.stringify({
 			type: "SendMsgToOtherWay",

@@ -19,6 +19,7 @@ import SocketQueue from "./utils/socketQueue.js"
 import { logDebugPerformance, saveDebugPerformances, appendSocketDebugEvent } from "./utils/debugPerformances.js"
 import checkNonTlsConnection from "./utils/checkNonTlsConnection.js"
 import copyToClipboard from "./utils/copyToClipboard.js"
+import removeLinesFromConsole from "./utils/removeLinesFromConsole.js"
 
 var relayServerUrl = "http://192.168.1.174:8080/"
 const CHUNK_SIZE = 2 * 1024 * 1024 // 2 MiB
@@ -143,10 +144,7 @@ export default async function () {
 						if(confirmation === "sendAll") disableAskingDoubleCheckPaths = true
 
 						// Delete the two last line of console
-						process.stdout.moveCursor(0, -1)
-						process.stdout.clearLine(1)
-						process.stdout.moveCursor(0, -1)
-						process.stdout.clearLine(1)
+						removeLinesFromConsole(2)
 						spinner.start()
 					} else { // auto ignore all double check paths
 						confirmation = "ignoreAll"
@@ -268,7 +266,7 @@ export default async function () {
 	const primaryDetails = {
 		"structure": structure.map(item => ({
 			name: item.name,
-			virtualPath: item.virtualPath,
+			path: item.virtualPath,
 			size: item.size,
 			type: item.type
 		})),
@@ -352,7 +350,7 @@ export default async function () {
 					: "(Starting...)"
 
 		var newText = isSendingProcessEnded
-			? `Sent ${chalk.cyan(intlFormatter.format(currentFilePosition || filesCount || 1))} file${currentFilePosition > 1 ? "s" : ""} and ${chalk.cyan(intlFormatter.format(foldersCount))} folder${foldersCount > 1 ? "s" : ""}.`
+			? `Sent ${chalk.cyan(intlFormatter.format(filesCount || 1))} file${filesCount > 1 ? "s" : ""} and ${chalk.cyan(intlFormatter.format(foldersCount))} folder${foldersCount > 1 ? "s" : ""}.`
 			: `Sending file ${chalk.cyan(intlFormatter.format(currentFilePosition || 1))} / ${chalk.cyan(intlFormatter.format(filesCount))} ${chalk.dim(sendingStatus)}`
 		if (currentFileDisplayName && !isSendingProcessEnded) {
 			var percentage = currentFileSize > 0 ? Math.floor((currentFileSentBytes / currentFileSize) * 100) : 0
