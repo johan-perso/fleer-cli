@@ -404,13 +404,13 @@ export default async function () {
 			isConnectedToShareDisplayedOnce = true
 
 			const shareLink = `${relayServerUrl}/d/${shareId}#${encryption.USED_PROTOCOL_INDICATOR}.${cipher.shortKey}`
-			const shouldJumpLine = shareLink.length > 80 || (`fleer d ${shareLink}`).length > (process.stdout.columns / 1.5)
+			const shouldJumpLine = shareLink.length > 80 || (`fdd ${shareLink}`).length > (process.stdout.columns / 1.5)
 
 			const copiedResult = await copyToClipboard(shareLink)
 
 			console.log() // line break
 			console.log(boxen(
-				`Start downloading files from any Fleer-compatible app using one of${process.stdout.columns >= 80 ? "\n" : " "}the following methods (use ${chalk.dim("fleer help-download")} for more details).\n\n • ${copiedResult?.status ? "📋 " : ""}${chalk.bold("Share Link")}${shouldJumpLine ? "\n   " : "      ".substring(0, copiedResult?.status ? "📋 ".length : undefined)}${chalk.cyan(stripForDisplay(shareLink))}\n • ${chalk.bold("Via Fleer CLI")}${shouldJumpLine ? "\n   " : "   "}${chalk.cyan(`fleer d ${stripForDisplay(shareLink)}`)}\n\n • ${chalk.bold("Using Keys")}      Share Key: ${chalk.cyan(stripForDisplay(shareId))}   Encryption: ${chalk.cyan(`${stripForDisplay(encryption.USED_PROTOCOL_INDICATOR.toString())}.${stripForDisplay(cipher.shortKey)}`)}\n ${chalk.dim("(for experts)")}     Relay Server: ${chalk.cyan(stripForDisplay(relayServerUrl))}`,
+				`Start downloading files from any Fleer-compatible app using one of${process.stdout.columns >= 80 ? "\n" : " "}the following methods (use ${chalk.dim("fleer help-download")} for more details).\n\n • ${copiedResult?.status ? "📋 " : ""}${chalk.bold("Share Link")}${shouldJumpLine ? "\n   " : "      ".substring(0, copiedResult?.status ? "📋 ".length : undefined)}${chalk.cyan(stripForDisplay(shareLink))}\n • ${chalk.bold("Via Fleer CLI")}${shouldJumpLine ? "\n   " : "   "}${chalk.cyan(`fdd ${stripForDisplay(shareLink)}`)}\n\n • ${chalk.bold("Using Keys")}      Share Key: ${chalk.cyan(stripForDisplay(shareId))}   Encryption: ${chalk.cyan(`${stripForDisplay(encryption.USED_PROTOCOL_INDICATOR.toString())}.${stripForDisplay(cipher.shortKey)}`)}\n ${chalk.dim("(for experts)")}     Relay Server: ${chalk.cyan(stripForDisplay(relayServerUrl))}`,
 				{ padding: 1, borderStyle: "round", borderColor: "cyan" }
 			))
 			console.log() // line break

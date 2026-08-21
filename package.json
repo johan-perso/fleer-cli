@@ -5,7 +5,8 @@
 	"description": "Share files from one device to another using the command line. Powered by Fleer for cross-platform sharing.",
 	"main": "index.js",
 	"bin": {
-		"fleer": "index.js"
+		"fleer": "index.js",
+		"fdd": "src/fdd.js"
 	},
 	"keywords": [
 		"cli",

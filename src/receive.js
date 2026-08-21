@@ -1,6 +1,7 @@
 import chalk from "chalk"
 import ora from "ora"
 import trash from "trash"
+import clipboard from "clipboardy"
 import { filesize } from "filesize"
 import path from "node:path"
 import { homedir } from "node:os"
@@ -46,9 +47,15 @@ export default async function () {
 	var relayUrl, shareKey, encryptionKey = null
 
 	// Get the download URL
-	const downloadUrlStr = globalThis.defaultArgs.slice(1)
-	if (downloadUrlStr.length === 0) {
-		process.stderr.write(`${chalk.red("✖")} ${breakLines(process.stdout.columns - 2, "  ", `No download URL provided.\nCancel using ${chalk.cyan("Ctrl+C")} and use ${chalk.cyan("fleer download <download_url>")} or fill out the following prompts.\nTo display more information about how Fleer works, use ${chalk.cyan("fleer help-download")}.\n\n`, { skipPrefixFirstLine: true })}\n`)
+	var downloadUrlStr = globalThis.defaultArgs.slice(globalThis.fromFleerDownloadAlias ? 0 : 1)
+	if (downloadUrlStr.length == 0) {
+		try {
+			const clipboardContent = await clipboard.read()
+			if(clipboardContent?.startsWith("http://") || clipboardContent?.startsWith("https://")) downloadUrlStr = clipboardContent.trim()
+		} catch (_) {}
+	}
+	if (downloadUrlStr.length == 0) {
+		process.stderr.write(`${chalk.red("✖")} ${breakLines(process.stdout.columns - 2, "  ", `No download URL provided.\nCancel using ${chalk.cyan("Ctrl+C")} and use ${chalk.cyan("fleer download <download_url>")} or fill out the following prompts.\nTo display more information about how Fleer works, use ${chalk.cyan("fleer help-download")}.\n`, { skipPrefixFirstLine: true })}\n`)
 		const manualDetails = await askManualDetails()
 		relayUrl = manualDetails.relayUrl
 		shareKey = manualDetails.shareKey

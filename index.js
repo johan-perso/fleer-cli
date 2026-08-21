@@ -11,7 +11,9 @@ import breakLines from "./src/utils/breakLines.js"
 import { getDebugSocketFilePath } from "./src/utils/debugPerformances.js"
 
 process.on("SIGINT", () => cliCleanup(true))
-process.on("exit", () => cliCleanup())
+process.on("exit", () => {
+	if (process.stdin.isTTY) process.stdin.setRawMode(false)
+})
 
 // Force exit on Ctrl+C
 process.stdin.setRawMode(true)
@@ -100,7 +102,9 @@ if(defaultArgs.includes("--debug-socket")) {
 	console.log(chalk.yellow(`Debug socket events will be saved to: ${chalk.cyan(getDebugSocketFilePath())}\n`))
 }
 
-if(defaultArgs.includes("version") || defaultArgs.includes("v") || defaultArgs.includes("--version") || defaultArgs.includes("-v")) showVersion()
+if(globalThis.fromFleerDownloadAlias) checkUpdate() && receiveFiles()
+
+else if(defaultArgs.includes("version") || defaultArgs.includes("v") || defaultArgs.includes("--version") || defaultArgs.includes("-v")) showVersion()
 else if(defaultArgs.includes("help") || defaultArgs.includes("h") || defaultArgs.includes("--help") || defaultArgs.includes("-h")) showHelp()
 else if(defaultArgs.includes("help-download") || defaultArgs.includes("--help-download")) showDownloadHelp()
 else if(defaultArgs.includes("send") || defaultArgs.includes("s") || defaultArgs.includes("upload") || defaultArgs.includes("u")) checkUpdate() && sendFiles()
@@ -113,6 +117,7 @@ else {
 function showDownloadHelp() {
 	var columns = process.stdout.columns || 80
 	if (columns > 94) columns = 94
+	columns -= 4
 	const prefix = "   "
 
 	console.log(`${breakLines(columns, "", "Fleer works with relay servers to transfer files between a sender and a receiver, even outside of a local network or behind a firewall.")}
@@ -126,6 +131,8 @@ ${breakLines(columns, prefix, `To access the data you send, the recipient must f
 ${chalk.bold.dim("3.")} ${chalk.bold("Sharing the keys")}
 ${breakLines(columns, prefix, `As explained above, the recipient needs to know two keys, as well as the relay URL. To make the transfer easier, the ${chalk.cyan("fleer send")} command automatically generates a link containing all the necessary information, ready to be sent to anyone.\n\nhttps://${chalk.cyan("server.fleer.app")}/d/${chalk.cyan("3QNfY73YU")}#${chalk.cyan("1.SFZRQo59aOuwEIZc")}\n\u200B              ↑                ↑             ↑\n\u200B      Relay server URL     Share Key    Encryption Key`)}
 `)
+
+	cliCleanup()
 }
 
 async function checkUpdate(){
