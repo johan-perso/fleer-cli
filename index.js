@@ -11,6 +11,7 @@ import packageJson from "./package.json"
 import { stripForDisplay } from "./src/utils/stripText.js"
 import sendFiles from "./src/send.js"
 import receiveFiles from "./src/receive.js"
+import displayRelayDetails from "./src/relayDetails.js"
 import breakLines from "./src/utils/breakLines.js"
 import displayFatalError from "./src/utils/displayFatalError.js"
 import { getDebugSocketFilePath } from "./src/utils/debugPerformances.js"
@@ -62,6 +63,7 @@ function showHelp(){
  Commands
    send                  Start sending one or multiple files
    receive               Start receiving one or multiple files
+   relay                 Display information about a specified relay server
 
  Options
    --version -v          Show installed version
@@ -114,6 +116,7 @@ else if(defaultArgs.includes("help") || defaultArgs.includes("h") || defaultArgs
 else if(defaultArgs.includes("help-download") || defaultArgs.includes("--help-download")) showDownloadHelp()
 else if(defaultArgs.includes("send") || defaultArgs.includes("s") || defaultArgs.includes("upload") || defaultArgs.includes("u")) checkUpdate() && sendFiles()
 else if(defaultArgs.includes("receive") || defaultArgs.includes("r") || defaultArgs.includes("download") || defaultArgs.includes("d")) checkUpdate() && receiveFiles()
+else if(defaultArgs.includes("relay")) checkUpdate() && displayRelayDetails()
 else if(defaultArgs.includes("qr")) displayQrCode()
 else {
 	displayFatalError(`Unknown command.\nUse ${chalk.cyan("fleer --help")} to see the list of available commands.`)

@@ -46,5 +46,5 @@ export default async function ({ relayUrl, spinner, logDebugPerformance, chunkSi
 		else spinner.start()
 	}
 
-	return true
+	return relayServerInfosJson?.data
 }

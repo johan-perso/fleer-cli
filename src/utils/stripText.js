@@ -5,6 +5,8 @@ function stripAnsi(str) {
 }
 
 function stripForDisplay(str) {
+	if (typeof str !== "string") str = String(str)
+	if (str === "undefined") return ""
 	if (!str || !str.length) return ""
 
 	return stripVTControlCharacters(str)
