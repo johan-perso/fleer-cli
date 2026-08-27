@@ -25,7 +25,6 @@ import removeLinesFromConsole from "./utils/removeLinesFromConsole.js"
 
 var relayServerUrl = "http://192.168.1.174:8080/"
 const CHUNK_SIZE = 2 * 1024 * 1024 // 2 MiB
-const supportedProtocolVersions = [1]
 const maxErrorsCount = 20
 
 const intlFormatter = new Intl.NumberFormat()
@@ -231,7 +230,12 @@ export default async function () {
 	logDebugPerformance("---------------")
 	spinner.start("Creating the transfer...")
 	while(relayServerUrl.endsWith("/")) relayServerUrl = relayServerUrl.slice(0, -1)
-	await checkRelayAccess({ relayUrl: relayServerUrl, spinner, logDebugPerformance, supportedProtocolVersions, chunkSize: CHUNK_SIZE })
+	await checkRelayAccess({
+		relayUrl: relayServerUrl,
+		spinner,
+		logDebugPerformance,
+		chunkSize: CHUNK_SIZE
+	})
 
 	// Create a transfer to the server
 	logDebugPerformance("shareCreation...")
@@ -272,8 +276,6 @@ export default async function () {
 			size: item.size,
 			type: item.type
 		})),
-		// "localIp": "0.0.0.0" || null,
-		// "localPort": "80" || null,
 		"deviceName": getDeviceName()
 	}
 	const files = structure

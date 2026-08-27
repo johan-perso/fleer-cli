@@ -21,8 +21,6 @@ import sanitizePath from "./utils/sanitizePath.js"
 import removeLinesFromConsole from "./utils/removeLinesFromConsole.js"
 import breakLines from "./utils/breakLines.js"
 
-const supportedProtocolVersions = [1]
-
 const intlFormatter = new Intl.NumberFormat()
 
 export default async function () {
@@ -95,7 +93,6 @@ export default async function () {
 		relayUrl: relayUrl,
 		spinner,
 		logDebugPerformance,
-		supportedProtocolVersions
 	})
 
 	// Get transfer details from the relay server

@@ -4,7 +4,9 @@ import displayFatalError from "./displayFatalError.js"
 import displayWarning from "./displayWarning.js"
 import { askConfirmation } from "./tuiPrompts.js"
 
-export default async function ({ relayUrl, spinner, logDebugPerformance, supportedProtocolVersions, chunkSize }) {
+const supportedProtocolVersions = [1]
+
+export default async function ({ relayUrl, spinner, logDebugPerformance, chunkSize }) {
 	logDebugPerformance("relayServerInfos...")
 	const relayServerInfos = await fetch(`${relayUrl}`)
 		.catch(error => {
