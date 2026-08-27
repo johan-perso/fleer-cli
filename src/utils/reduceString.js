@@ -1,11 +1,11 @@
-import { stripVTControlCharacters as stripAnsi } from "node:util"
+import { stripForDisplay } from "./stripText.js"
 
 const ellipsis = "..."
 
 // export function maxLength(string = "", maxLength = 50, padding = 0) {
 // 	if(!string) string = ""
 
-// 	const length = stripAnsi(string).length + padding
+// 	const length = stripForDisplay(string).length + padding
 // 	if (length <= maxLength) {
 // 		return string
 // 	}
@@ -27,7 +27,7 @@ export function maxLines(string = "", maxLines = 2, padding = 0) {
 		for (const word of words) {
 			const candidate = line ? `${line} ${word}` : word
 
-			if (stripAnsi(candidate).length <= width) {
+			if (stripForDisplay(candidate).length <= width) {
 				line = candidate
 			} else {
 				if (line) output.push(line)
@@ -47,7 +47,7 @@ export function maxLines(string = "", maxLines = 2, padding = 0) {
 	const visibleLines = string
 		.split("\n")
 		.flatMap(line => {
-			const length = stripAnsi(line).length
+			const length = stripForDisplay(line).length
 			return Array(Math.max(1, Math.ceil(length / width))).fill(null)
 		})
 

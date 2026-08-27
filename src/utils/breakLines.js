@@ -1,4 +1,4 @@
-import { stripVTControlCharacters as stripAnsi } from "node:util"
+import { stripForDisplay } from "./stripText.js"
 
 export default function (
 	columns = 80,
@@ -20,7 +20,7 @@ export default function (
 					? `${currentLine} ${word}`
 					: word
 
-				if (stripAnsi(nextLine).length > columns && currentLine) {
+				if (stripForDisplay(nextLine).length > columns && currentLine) {
 					lines.push(currentLine)
 					currentLine = word
 				} else {
