@@ -318,6 +318,15 @@ export default async function () {
 
 			isSenderDisconnected = !(message?.data?.isSenderConnected || false)
 
+			socket.send(JSON.stringify({
+				type: "SendMsgToOtherWay",
+				data: await cipher.encryptJson({
+					highPriority: true,
+					dataType: "DeviceName",
+					value: await getDeviceName()
+				})
+			}))
+
 			if (structure.length > 0) {
 				spinner.start("Checking files structure...")
 				for (const file of structure) {
@@ -641,7 +650,7 @@ export default async function () {
 		}
 	})(socket.send)
 	socket.onopen = () => {
-		socket.send(JSON.stringify({ type: "ConnectToShare", data: { shareId: shareKey, isSender: false, deviceName: getDeviceName() } }))
+		socket.send(JSON.stringify({ type: "ConnectToShare", data: { shareId: shareKey, isSender: false } }))
 	}
 	socket.onmessage = (event) => {
 		socketQueue.enqueue(event)

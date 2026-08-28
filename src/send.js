@@ -269,6 +269,7 @@ export default async function () {
 	// Create, encrypt and send the primary details to the server
 	spinner.start("Sending transfer details...")
 	logDebugPerformance("Creating primaryDetails...")
+	const deviceName = await getDeviceName()
 	const primaryDetails = {
 		"structure": structure.map(item => ({
 			name: item.name,
@@ -276,7 +277,7 @@ export default async function () {
 			size: item.size,
 			type: item.type
 		})),
-		"deviceName": getDeviceName()
+		"deviceName": deviceName
 	}
 	const files = structure
 		.filter(item => item.type === "file")
