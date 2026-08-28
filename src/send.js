@@ -429,7 +429,12 @@ export default async function () {
 			if(!currentSendingProcessId) sendFiles()
 			break
 		case "msgFromReceiver":
-			const unencryptedMessage = await cipher.decryptJson(message.data)
+			var unencryptedMessage = {}
+			try {
+				unencryptedMessage = await cipher.decryptJson(message.data)
+			} catch (error) {
+				return displayFatalError(`Could not decrypt a message from the sender.\nThis is likely due to an incorrect encryption key or a corrupted transfer.\nError: ${error?.message || error?.stack}`, spinner)
+			}
 
 			// Delete transfer when the receiver has finished downloading all files, and we were waiting for it
 			if(unencryptedMessage?.dataType == "DownloadFinished" && isSendingProcessEnded) {
@@ -451,6 +456,7 @@ export default async function () {
 				if (globalThis.debugPerformances === true) await saveDebugPerformances()
 				process.exit()
 			}
+
 			break
 		case "allowedBytesMaxUpdate":
 			// The relay server is limiting the amount of bytes it can keep in cache,

@@ -366,7 +366,12 @@ export default async function () {
 			}
 			break
 		case "msgFromSender":
-			const unencryptedMessage = await cipher.decryptJson(message.data)
+			var unencryptedMessage = {}
+			try {
+				unencryptedMessage = await cipher.decryptJson(message.data)
+			} catch (error) {
+				return displayFatalError(`Could not decrypt a message from the sender.\nThis is likely due to an incorrect encryption key or a corrupted transfer.\nError: ${error?.message || error?.stack}`, spinner)
+			}
 
 			if(unencryptedMessage?.dataType == "FileChunks") registerChunkForFile(unencryptedMessage)
 			else if(unencryptedMessage?.dataType == "TransferFinished" && isDownloadingProcessEnded) {
@@ -381,6 +386,11 @@ export default async function () {
 		case "senderStatus":
 			isSenderDisconnected = !(message?.data?.connected || false)
 			if (spinner.isSpinning) _updateFilesDownloadingSpinner()
+			break
+		case "shareDeleted":
+			spinner.stop()
+			displayFatalError(message?.data?.message || "Transfer was deleted for an unknown reason.")
+			process.exit(1)
 			break
 		case "restartTransfer":
 			if (shouldIgnoreChunks) return logDebugPerformance("Ignoring restartTransfer message because shouldIgnoreChunks is set to true.")
