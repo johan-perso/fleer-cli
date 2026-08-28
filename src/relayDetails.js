@@ -1,5 +1,6 @@
 import chalk from "chalk"
 import ora from "ora"
+
 import { stripForDisplay } from "./utils/stripText.js"
 import displayFatalError from "./utils/displayFatalError.js"
 import checkRelayAccess from "./utils/checkRelayAccess.js"
@@ -32,7 +33,6 @@ export default async function () {
 	const relayServerInfosJson = await checkRelayAccess({
 		relayUrl: relayUrl,
 		spinner,
-		logDebugPerformance,
 	})
 	spinner.stop()
 
@@ -50,5 +50,4 @@ export default async function () {
 	console.log(`• ${chalk.bold("Associated Links:")}\n${Object.entries(relayServerInfosJson?.relay?.associatedLinks || {}).map(([key, value]) => `  • ${chalk.bold(stripForDisplay(key))}: ${chalk.cyan(stripForDisplay(value))}`).join("\n")}`)
 
 	process.exit(0)
-
 }

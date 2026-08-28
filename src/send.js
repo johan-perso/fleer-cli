@@ -463,6 +463,11 @@ export default async function () {
 			// so this event is fired when the received download a chunk, allowing the relay to accept more bytes from us
 			allowedBytesByRelay = message?.data?.allowedBytesMax
 			break
+		case "shareDeleted":
+			spinner.stop()
+			displayFatalError(message?.data?.message || "Transfer was deleted for an unknown reason.")
+			process.exit(1)
+			break
 		case "restartTransfer":
 			// As seen in the comment of allowedBytesMaxUpdate handler, the relay keep chunks in cache for a limited time.
 			// If the receiver ask for chunks that got deleted from the relay cache, transfer will have to be restarted from the beginning.
