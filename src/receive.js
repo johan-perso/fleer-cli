@@ -192,7 +192,8 @@ export default async function () {
 
 	var currentFileBeingIgnored = false
 	var currentFileDisplayName = null
-	var currentFilePosition = 1
+	var currentFileOriginalPath = null
+	var currentFilePosition = 0
 	var currentFileSize = 0
 	var currentFileDownloadingBytes = 0
 
@@ -413,6 +414,7 @@ export default async function () {
 			currentFileDownloadingBytes = 0
 			currentFileBeingIgnored = false
 			currentFileDisplayName = null
+			currentFileOriginalPath = null
 			currentFilePosition = 1
 			currentFileSize = 0
 
@@ -464,7 +466,15 @@ export default async function () {
 		const fileForChunk = getFileForChunk(index)
 		if (!fileForChunk) {
 			return displayFatalError(`Could not find any file associated to chunk ${chalk.cyan(`#${index}`)}.\nThis is likely due to a problem with the sender client that didn't told us about this chunk, or the relay server that didn't forwarded the correct information.`, spinner)
-		} if (ignoredFilesPath.includes(fileForChunk.path)) {
+		}
+
+		if(fileForChunk.path != currentFileOriginalPath) {
+			currentFilePosition++
+			currentFileOriginalPath = fileForChunk.path
+			_updateFilesDownloadingSpinner()
+		}
+
+		if (ignoredFilesPath.includes(fileForChunk.path)) {
 			logDebugPerformance(`Ignoring chunk ${index} because its associated file "${fileForChunk.path}" is in the ignored files list.`)
 			currentFileDisplayName = stripForDisplay(path.basename(fileForChunk.path))
 			currentFileBeingIgnored = true
@@ -488,7 +498,7 @@ export default async function () {
 					// Check what to do if the file already exists
 					if (await exists(savePath)) {
 						const actionForExistingFile = await decideActionForExistingFile(savePath, fileForChunk)
-						if (!actionForExistingFile?.continue) return
+						if (!actionForExistingFile?.continue) throw new Error("ignore") // because "return" would not execute some of post-saving code
 						savePath = renamedFilesPath[fileForChunk.path] || actionForExistingFile?.savePath || savePath
 					}
 
@@ -509,7 +519,9 @@ export default async function () {
 				currentFileDownloadingBytes += plain.length
 				_updateFilesDownloadingSpinner()
 			} catch (error) {
-				return displayFatalError(`Could not write chunk ${chalk.cyan(`#${index}`)} to "${chalk.cyan(savePath)}".\nThis is likely due to a problem with the local file system or permissions.\nError: ${error?.message || error?.stack}`, spinner)
+				if(error?.message != "ignore") {
+					return displayFatalError(`Could not write chunk ${chalk.cyan(`#${index}`)} to "${chalk.cyan(savePath)}".\nThis is likely due to a problem with the local file system or permissions.\nError: ${error?.message || error?.stack}`, spinner)
+				}
 			}
 
 			_calculateMbps()
@@ -523,8 +535,6 @@ export default async function () {
 			await writingChunks[name].end()
 			logDebugPerformance(`Ended file stream for ${name}`)
 			delete writingChunks[name]
-
-			currentFilePosition++
 		}
 
 		if (lastChunkId != null && lastChunkId != 0 && lastReceivedChunkIndex >= lastChunkId) finishDownload()
