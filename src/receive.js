@@ -198,10 +198,11 @@ export default async function () {
 
 	var lastSocketWarning = null
 	function _updateFilesDownloadingSpinner() {
+		const mbpsContent = mbps >= 1 ? `${chalk.dim.cyan(mbps.toFixed(2))} MB/s` : `${chalk.dim.cyan((mbps * 1000).toFixed(2))} KB/s`
 		const downloadingStatus = isDownloadingProcessEnded
 			? ""
 			: mbpsEmoji.length && mbps != null
-				? `(${mbpsEmoji} ${chalk.dim.cyan(mbps.toFixed(2))} MB/s)`
+				? `(${mbpsEmoji} ${mbpsContent})`
 				: "(Starting...)"
 
 		const ignoredFilesCount = ignoredFilesPath.length
@@ -403,7 +404,6 @@ export default async function () {
 				await new Promise(resolve => setTimeout(resolve, 500))
 			}
 
-			currentFilePosition = 1
 			lastReceivedChunkIndex = -1
 			receivedBytesFromRelay = 0
 			startDownloadingTime = null
@@ -523,6 +523,8 @@ export default async function () {
 			await writingChunks[name].end()
 			logDebugPerformance(`Ended file stream for ${name}`)
 			delete writingChunks[name]
+
+			currentFilePosition++
 		}
 
 		if (lastChunkId != null && lastChunkId != 0 && lastReceivedChunkIndex >= lastChunkId) finishDownload()

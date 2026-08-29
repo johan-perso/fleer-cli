@@ -351,12 +351,13 @@ export default async function () {
 	var lastSocketWarning = null
 	var spinnerFailed = false
 	function _updateFilesSendingSpinner(isProcessEnding = false) {
+		const mbpsContent = mbps >= 1 ? `${chalk.dim.cyan(mbps.toFixed(2))} MB/s` : `${chalk.dim.cyan((mbps * 1000).toFixed(2))} KB/s`
 		const sendingStatus = isSendingProcessEnded || isSendingProcessInterrupted
 			? ""
 			: isWaitingForRelayToAllowSending
 				? "(Sending too fast, waiting for receiver to catch up...)"
 				: currentSendingProcessId
-					? `(${mbpsEmoji} ${chalk.dim.cyan(mbps.toFixed(2))} MB/s)`
+					? `(${mbpsEmoji} ${mbpsContent})`
 					: "(Starting...)"
 
 		var newText = isSendingProcessEnded
