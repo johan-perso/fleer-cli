@@ -289,38 +289,43 @@ export default async function () {
 
 	const cipher = await encryption.ShareCipher.create({ shareId, protocolIndicator: encryption.USED_PROTOCOL_INDICATOR })
 
-	logDebugPerformance("Encrypting primaryDetails...")
-	const encryptedPrimaryDetails = await cipher.encryptJson(primaryDetails, "primary")
-	logDebugPerformance("Encrypted primaryDetails!")
+	async function sendPrimaryDetailsToRelay(withoutStructure = false) {
+		logDebugPerformance(`Encrypting primaryDetails (${withoutStructure ? "WITHOUT structure" : "with structure"})...`)
+		if(withoutStructure) primaryDetails.structure = []
+		const encryptedPrimaryDetails = await cipher.encryptJson(primaryDetails, "primary")
+		logDebugPerformance("Encrypted primaryDetails!")
 
-	logDebugPerformance("Sending primaryDetails...")
-	const sendPrimaryDetails = await fetch(`${relayServerUrl}/shares/chunks?shareId=${shareId}&isThisPrimaryDetails=true`, {
-		method: "PUT",
-		headers: {
-			"Content-Type": "application/octet-stream",
-		},
-		body: encryptedPrimaryDetails
-	}).catch(error => {
-		displayFatalError(`Could not send primary details to the relay server.\n  Error: ${error.message}`, spinner)
-	})
-	var sendPrimaryDetailsJson
-	try {
-		sendPrimaryDetailsJson = await sendPrimaryDetails.json()
-	} catch (error) {
-		const responseStatusCode = sendPrimaryDetails?.status || "unknown"
-		displayFatalError(`Could not parse the response from the relay server while sending the primary details.\n  HTTP Code: ${responseStatusCode}\n  Error: ${error.message}`, spinner)
-	}
-	if(sendPrimaryDetailsJson?.error) {
-		displayFatalError(`Relay server threw an error (${chalk.dim(stripForDisplay(sendPrimaryDetailsJson?.data?.error || sendPrimaryDetailsJson?.error))}):\n  ${stripForDisplay(sendPrimaryDetailsJson?.data?.message || sendPrimaryDetailsJson?.message || JSON.stringify(sendPrimaryDetailsJson))}.`, spinner)
-	}
-	logDebugPerformance("Sent primaryDetails!")
+		logDebugPerformance("Sending primaryDetails...")
+		const sendPrimaryDetails = await fetch(`${relayServerUrl}/shares/chunks?shareId=${shareId}&isThisPrimaryDetails=true`, {
+			method: "PUT",
+			headers: {
+				"Content-Type": "application/octet-stream",
+			},
+			body: encryptedPrimaryDetails
+		}).catch(error => {
+			displayFatalError(`Could not send primary details to the relay server.\n  Error: ${error.message}`, spinner)
+		})
+		var sendPrimaryDetailsJson
+		try {
+			sendPrimaryDetailsJson = await sendPrimaryDetails.json()
+		} catch (error) {
+			const responseStatusCode = sendPrimaryDetails?.status || "unknown"
+			displayFatalError(`Could not parse the response from the relay server while sending the primary details.\n  HTTP Code: ${responseStatusCode}\n  Error: ${error.message}`, spinner)
+		}
+		if(sendPrimaryDetailsJson?.error) {
+			if(sendPrimaryDetailsJson?.error == "body_too_large" && !withoutStructure) return sendPrimaryDetailsToRelay(true) // retry without structure
+			displayFatalError(`Relay server threw an error (${chalk.dim(stripForDisplay(sendPrimaryDetailsJson?.data?.error || sendPrimaryDetailsJson?.error))}):\n  ${stripForDisplay(sendPrimaryDetailsJson?.data?.message || sendPrimaryDetailsJson?.message || JSON.stringify(sendPrimaryDetailsJson))}.`, spinner)
+		}
+		logDebugPerformance("Sent primaryDetails!")
 
-	const errorSuffix = "\nThis is likely due to a misconfiguration or an unsupported relay server.\nPlease contact the relay server administrator for further assistance."
-	if(sendPrimaryDetailsJson?.data?.chunkId !== null) displayFatalError(`The relay server returned an unexpected chunk ID while sending the primary details.${errorSuffix}`, spinner)
-	if(sendPrimaryDetailsJson?.data?.bytes < 1) displayFatalError(`The relay server returned an unexpected number of bytes received while sending the primary details.${errorSuffix}`, spinner)
-	if(sendPrimaryDetailsJson?.data?.allowedBytesMax < 1) displayFatalError(`The relay server returned an unexpected number of bytes allowed while sending the primary details.${errorSuffix}`, spinner)
-	allowedBytesByRelay = sendPrimaryDetailsJson?.data?.allowedBytesMax || 0
-	spinner.succeed(`Transfer details sent successfully. ${chalk.dim("(🔐")} ${chalk.dim.cyan(`${encryption.USED_PROTOCOL_INDICATOR}.${cipher.shortKey}`)}${chalk.dim(")")}`)
+		const errorSuffix = "\nThis is likely due to a misconfiguration or an unsupported relay server.\nPlease contact the relay server administrator for further assistance."
+		if(sendPrimaryDetailsJson?.data?.chunkId !== null) displayFatalError(`The relay server returned an unexpected chunk ID while sending the primary details.${errorSuffix}`, spinner)
+		if(sendPrimaryDetailsJson?.data?.bytes < 1) displayFatalError(`The relay server returned an unexpected number of bytes received while sending the primary details.${errorSuffix}`, spinner)
+		if(sendPrimaryDetailsJson?.data?.allowedBytesMax < 1) displayFatalError(`The relay server returned an unexpected number of bytes allowed while sending the primary details.${errorSuffix}`, spinner)
+		allowedBytesByRelay = sendPrimaryDetailsJson?.data?.allowedBytesMax || 0
+		spinner.succeed(`Transfer details sent successfully. ${chalk.dim("(🔐")} ${chalk.dim.cyan(`${encryption.USED_PROTOCOL_INDICATOR}.${cipher.shortKey}`)}${chalk.dim(")")}`)
+	}
+	await sendPrimaryDetailsToRelay()
 
 	// Initialize a few (many 💀) variables for the files sending process
 	var currentSendingProcessId = null
