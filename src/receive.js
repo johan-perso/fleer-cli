@@ -166,7 +166,7 @@ export default async function () {
 	// Initialize a few (many 💀) variables for the files downloading process
 	var filesCount = shareDetailsJson?.data?.filesCount || 0
 	var foldersCount = shareDetailsJson?.data?.foldersCount || 0
-	var totalSizeBytes = shareDetailsJson?.data?.totalSize || 0
+	var totalSizeBytes = (shareDetailsJson?.data?.receivedBytes > shareDetailsJson?.data?.totalSize ? shareDetailsJson?.data?.receivedBytes : shareDetailsJson?.data?.totalSize) || 0
 	var lastReceivedChunkIndex = -1
 
 	const saveDirectory = "./"
@@ -242,7 +242,7 @@ export default async function () {
 			newText += `\n${chalk.dim(`use ${chalk.cyan("Ctrl+C")} to cancel download`)}`
 		}
 
-		if (lastSocketWarning) newText += `\n${chalk.yellow("⚠")} ${chalk.dim(reduceString.maxLines(lastSocketWarning, 3, 5))}`
+		if (lastSocketWarning) newText += `\n${chalk.yellow("⚠")} ${chalk.dim(breakLines(process.stdout.columns - 2, "  ", reduceString.maxLines(lastSocketWarning, 3, 5), { skipPrefixFirstLine: true }))}`
 		if (isSenderDisconnected) newText += `\n${chalk.yellow("⚠")} ${chalk.dim(reduceString.maxLines("Sender seems to be disconnected.", 1, 5))}`
 
 		if (spinner.text !== newText) spinner.text = newText
