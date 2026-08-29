@@ -221,7 +221,7 @@ export default async function () {
 
 		if(isDownloadingProcessEnded) {
 			const totalTime = Math.round((endedDownloadTime - startDownloadingTime) / 1000)
-			newText += `\n  Took ${chalk.cyan(totalTime > 300 ? `${Math.floor(totalTime / 60)} min ${totalTime % 60} sec` : `${totalTime} sec`)} for ${chalk.cyan(filesize(receivedBytesFromRelay))}.`
+			newText += `\n  Took ${chalk.cyan(totalTime > 99 ? `${Math.floor(totalTime / 60)} min ${totalTime % 60} sec` : `${totalTime} sec`)} for ${chalk.cyan(filesize(receivedBytesFromRelay))}.`
 
 			const homeDir = homedir()
 			const relativeSaveDirectory = path.relative(process.cwd(), saveDirectory)

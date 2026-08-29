@@ -370,16 +370,16 @@ export default async function () {
 		}
 		if(isSendingProcessEnded && !spinnerFailed) {
 			const totalTime = Math.round((Date.now() - startSendingTime) / 1000)
-			newText += `\n  Took ${chalk.cyan(totalTime > 300 ? `${Math.floor(totalTime / 60)} min ${totalTime % 60} sec` : `${totalTime} sec`)} for ${chalk.cyan(filesize(sentBytesToRelayDisplay))}.`
+			newText += `\n  Took ${chalk.cyan(totalTime > 99 ? `${Math.floor(totalTime / 60)} min ${totalTime % 60} sec` : `${totalTime} sec`)} for ${chalk.cyan(filesize(sentBytesToRelayDisplay))}.`
 			if(!isProcessEnding) newText += `\n  ${chalk.dim("Waiting for receiver to finish downloading...")}`
 		} else if(isSendingProcessInterrupted && !spinnerFailed) {
 			newText += `\n  ${chalk.dim("Transfer was interrupted. Waiting for the receiver to reconnect...")}`
 		} else if(!spinnerFailed) {
-			newText += `\n\n${chalk.dim(`sent ${chalk.cyan(filesize(sentBytesToRelayDisplay))} / ${chalk.cyan(filesize(totalSizeBytes))} (${Math.floor((sentBytesToRelayDisplay / totalSizeBytes) * 100)}%)`)}`
+			const totalPercentage = totalSizeBytes > 0 ? Math.floor((sentBytesToRelayDisplay / totalSizeBytes) * 100) : 0
+			newText += `\n\n${chalk.dim(`sent ${chalk.cyan(filesize(sentBytesToRelayDisplay))} / ${chalk.cyan(filesize(totalSizeBytes))}${totalPercentage > 100 ? "" : ` (${totalPercentage}%)`}`)}`
 			newText += `\n${chalk.dim(`use ${chalk.cyan("Ctrl+C")} to cancel transfer`)}`
 		}
-
-		if (lastSocketWarning) newText += `\n${chalk.yellow("⚠")} ${chalk.dim(reduceString.maxLines(lastSocketWarning, 3, 2))}`
+		if (lastSocketWarning) newText += `\n${chalk.yellow("⚠")} ${chalk.dim(breakLines(process.stdout.columns - 2, "  ", reduceString.maxLines(lastSocketWarning, 3, 2), { skipPrefixFirstLine: true }))}`
 
 		if (spinner.text !== newText) spinner.text = newText
 		return newText
