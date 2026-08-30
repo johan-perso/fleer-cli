@@ -22,6 +22,7 @@ import { logDebugPerformance, saveDebugPerformances, appendSocketDebugEvent } fr
 import checkNonTlsConnection from "./utils/checkNonTlsConnection.js"
 import copyToClipboard from "./utils/copyToClipboard.js"
 import removeLinesFromConsole from "./utils/removeLinesFromConsole.js"
+import breakLines from "./utils/breakLines.js"
 
 var relayServerUrl = "http://192.168.1.174:8080/"
 const CHUNK_SIZE = 2 * 1024 * 1024 // 2 MiB
@@ -330,6 +331,7 @@ export default async function () {
 	// Initialize a few (many 💀) variables for the files sending process
 	var currentSendingProcessId = null
 	var isWaitingForRelayToAllowSending = false
+	var isRelayTooBusy = false
 	var isSendingProcessInterrupted = false
 	var isSendingProcessEnded = false
 	var startSendingTime = null
@@ -379,7 +381,9 @@ export default async function () {
 			newText += `\n\n${chalk.dim(`sent ${chalk.cyan(filesize(sentBytesToRelayDisplay))} / ${chalk.cyan(filesize(totalSizeBytes))}${totalPercentage > 100 ? "" : ` (${totalPercentage}%)`}`)}`
 			newText += `\n${chalk.dim(`use ${chalk.cyan("Ctrl+C")} to cancel transfer`)}`
 		}
+
 		if (lastSocketWarning) newText += `\n${chalk.yellow("⚠")} ${chalk.dim(breakLines(process.stdout.columns - 2, "  ", reduceString.maxLines(lastSocketWarning, 3, 2), { skipPrefixFirstLine: true }))}`
+		if (isRelayTooBusy) newText += `\n${chalk.yellow("⚠")} ${chalk.dim(breakLines(process.stdout.columns - 2, "  ", "The relay server you are using is currently handling too many transfers. The upload speed will be slowed down and may be paused for a few seconds.\nWait here, try again later, or switch to a different relay server for faster transfer speeds.", { skipPrefixFirstLine: true }))}`
 
 		if (spinner.text !== newText) spinner.text = newText
 		return newText
@@ -483,6 +487,7 @@ export default async function () {
 			currentSendingProcessId = null
 			allowedBytesByRelay = null
 			isWaitingForRelayToAllowSending = false
+			isRelayTooBusy = false
 
 			sentBytesToRelayDisplay = 0
 			sentBytesToRelayExact = 0
@@ -657,7 +662,7 @@ export default async function () {
 					await new Promise(resolve => setTimeout(resolve, 500))
 				}
 
-				// Wwe were waiting for the relay to allow sending, but now we can send again
+				// We were waiting for the relay to allow sending, but now we can send again
 				if(isWaitingForRelayToAllowSending) {
 					isWaitingForRelayToAllowSending = false
 					_updateFilesSendingSpinner()
@@ -704,11 +709,19 @@ export default async function () {
 				}
 				logDebugPerformance(`${file.virtualPath}: Sent chunk ${currentFileChunkIndex + 1}/${total} (virtualChunkIndex: ${virtualChunkIndex}) to relay server`)
 
+				isRelayTooBusy = false // reset the relay too busy state, if it was set before
+
 				if(responseJson?.error == "wait_before_uploading") { // 2nd check for allowed bytes by relay
 					currentFileChunkIndex-- // retry the same chunk
 					isWaitingForRelayToAllowSending = true
 					_updateFilesSendingSpinner()
 					await new Promise(resolve => setTimeout(resolve, 500))
+					continue
+				} else if(responseJson?.error == "server_too_busy") {
+					currentFileChunkIndex-- // retry the same chunk
+					isRelayTooBusy = true
+					_updateFilesSendingSpinner()
+					await new Promise(resolve => setTimeout(resolve, 3000))
 					continue
 				} else if(responseJson?.error == "missing_previous_chunk") { // transfer may have restarted during the upload
 					await new Promise(resolve => setTimeout(resolve, 500))
