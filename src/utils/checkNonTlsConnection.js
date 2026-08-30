@@ -1,6 +1,6 @@
 import chalk from "chalk"
-import { stripForDisplay } from "./stripText.js"
 
+import { stripForDisplay } from "./stripText.js"
 import displayWarning from "./displayWarning.js"
 import { askConfirmation } from "./tuiPrompts.js"
 

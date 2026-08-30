@@ -4,6 +4,7 @@ import ora from "ora"
 import { stripForDisplay } from "./utils/stripText.js"
 import displayFatalError from "./utils/displayFatalError.js"
 import checkRelayAccess from "./utils/checkRelayAccess.js"
+import { logDebugPerformance } from "./utils/debugPerformances.js"
 import checkNonTlsConnection from "./utils/checkNonTlsConnection.js"
 
 export default async function () {
@@ -33,6 +34,7 @@ export default async function () {
 	const relayServerInfosJson = await checkRelayAccess({
 		relayUrl: relayUrl,
 		spinner,
+		logDebugPerformance,
 	})
 	spinner.stop()
 
