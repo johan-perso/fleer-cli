@@ -368,9 +368,16 @@ export default async function () {
 			}
 			break
 		case "msgFromSender":
+			var parsedJsonMessage = null
+			try {
+				parsedJsonMessage = JSON.parse(message.data)
+			} catch (error) {
+				parsedJsonMessage = null
+			}
+
 			var unencryptedMessage = {}
 			try {
-				unencryptedMessage = await cipher.decryptJson(message.data)
+				unencryptedMessage = await cipher.decryptJson(parsedJsonMessage?.data || message?.data)
 			} catch (error) {
 				return displayFatalError(`Could not decrypt a message from the sender.\nThis is likely due to an incorrect encryption key or a corrupted transfer.\nError: ${error?.message || error?.stack}`, spinner)
 			}

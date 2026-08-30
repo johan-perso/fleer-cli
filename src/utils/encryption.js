@@ -55,6 +55,9 @@ export function toBytes(input) {
 		return new Uint8Array(input.buffer, input.byteOffset, input.byteLength)
 	}
 	if (Array.isArray(input)) return Uint8Array.from(input)
+
+	// if (input && typeof input == 'string')
+
 	if (typeof input === "string") return fromBase64(input)
 
 	// {"0":x,"1":x,...} is produced by JSON.stringify on a Uint8Array, so we can accept it too.
@@ -72,14 +75,18 @@ export function toBytes(input) {
 
 // Decode base64 string into a Uint8Array
 export function fromBase64(text) {
-	const binary = atob(String(text))
-	const bytes = new Uint8Array(binary.length)
+	try {
+		const binary = atob(String(text))
+		const bytes = new Uint8Array(binary.length)
 
-	for (let i = 0; i < binary.length; i++) {
-		bytes[i] = binary.charCodeAt(i)
+		for (let i = 0; i < binary.length; i++) {
+			bytes[i] = binary.charCodeAt(i)
+		}
+
+		return bytes
+	} catch (e) { // maybe the input is not a valid base64 and is already a string of bytes
+		return encoder.encode(String(text))
 	}
-
-	return bytes
 }
 
 // =================================== //
@@ -225,7 +232,13 @@ export class ShareCipher {
 	}
 	async decryptJson(payload, index = "default") {
 		const bytes = await this.#unseal(payload, this.#aad(index))
-		return JSON.parse(decoder.decode(bytes))
+
+		const decoded = decoder.decode(bytes)
+		if (!decoded) throw new Error("Decrypted data is empty. It may be corrupted or truncated.")
+
+		if (typeof decoded === "string") return JSON.parse(decoded)
+		else if (decoded instanceof Uint8Array) return JSON.parse(decoder.decode(decoded))
+		else throw new Error(`Decrypted data is not a valid string or Uint8Array (instead is ${typeof decoded}). It may be corrupted or truncated.`)
 	}
 }
 

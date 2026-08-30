@@ -448,11 +448,18 @@ export default async function () {
 			if(!currentSendingProcessId) sendFiles()
 			break
 		case "msgFromReceiver":
+			var parsedJsonMessage = null
+			try {
+				parsedJsonMessage = JSON.parse(message.data)
+			} catch (error) {
+				parsedJsonMessage = null
+			}
+
 			var unencryptedMessage = {}
 			try {
-				unencryptedMessage = await cipher.decryptJson(message.data)
+				unencryptedMessage = await cipher.decryptJson(parsedJsonMessage?.data || message?.data)
 			} catch (error) {
-				return displayFatalError(`Could not decrypt a message from the sender.\nThis is likely due to an incorrect encryption key or a corrupted transfer.\nError: ${error?.message || error?.stack}`, spinner)
+				return displayFatalError(`Could not decrypt a message from the receiver.\nThis is likely due to an incorrect encryption key or a corrupted transfer.\nError: ${error?.message || error?.stack}`, spinner)
 			}
 
 			// Delete transfer when the receiver has finished downloading all files, and we were waiting for it
