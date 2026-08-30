@@ -328,6 +328,13 @@ export default async function () {
 	}
 	await sendPrimaryDetailsToRelay()
 
+	// When encrypting a chunk, the encryption process adds some overhead compared to the original size of the chunk.
+	// This will report an estimated total size of the transfer, including this overhead.
+	const estimatedTotalSizeBytes = files.reduce((total, file) => {
+		const chunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE))
+		return total + file.size + (chunks * (cipher.protocol.ivBytes + (cipher.protocol.tagBits / 8)))
+	}, 0)
+
 	// Initialize a few (many 💀) variables for the files sending process
 	var currentSendingProcessId = null
 	var isWaitingForRelayToAllowSending = false
@@ -362,6 +369,8 @@ export default async function () {
 					? `(${mbpsEmoji} ${mbpsContent})`
 					: "(Starting...)"
 
+		const displayedTotalSize = estimatedTotalSizeBytes > totalSizeBytes ? estimatedTotalSizeBytes : totalSizeBytes
+
 		var newText = isSendingProcessEnded
 			? `Sent ${chalk.cyan(intlFormatter.format(filesCount || 1))} file${filesCount > 1 ? "s" : ""} and ${chalk.cyan(intlFormatter.format(foldersCount))} folder${foldersCount > 1 ? "s" : ""}.`
 			: `Sending file ${chalk.cyan(intlFormatter.format(currentFilePosition || 1))} / ${chalk.cyan(intlFormatter.format(filesCount))} ${chalk.dim(sendingStatus)}`
@@ -377,8 +386,8 @@ export default async function () {
 		} else if(isSendingProcessInterrupted && !spinnerFailed) {
 			newText += `\n  ${chalk.dim("Transfer was interrupted. Waiting for the receiver to reconnect...")}`
 		} else if(!spinnerFailed) {
-			const totalPercentage = totalSizeBytes > 0 ? Math.floor((sentBytesToRelayDisplay / totalSizeBytes) * 100) : 0
-			newText += `\n\n${chalk.dim(`sent ${chalk.cyan(filesize(sentBytesToRelayDisplay))} / ${chalk.cyan(filesize(totalSizeBytes))}${totalPercentage > 100 ? "" : ` (${totalPercentage}%)`}`)}`
+			const totalPercentage = displayedTotalSize > 0 ? Math.floor((sentBytesToRelayDisplay / displayedTotalSize) * 100) : 0
+			newText += `\n\n${chalk.dim(`sent ${chalk.cyan(filesize(sentBytesToRelayDisplay))} / ${chalk.cyan(filesize(displayedTotalSize))}${totalPercentage > 100 ? "" : ` (${totalPercentage}%)`}`)}`
 			newText += `\n${chalk.dim(`use ${chalk.cyan("Ctrl+C")} to cancel transfer`)}`
 		}
 
