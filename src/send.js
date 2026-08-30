@@ -24,7 +24,7 @@ import copyToClipboard from "./utils/copyToClipboard.js"
 import removeLinesFromConsole from "./utils/removeLinesFromConsole.js"
 import breakLines from "./utils/breakLines.js"
 
-var relayServerUrl = "http://192.168.1.174:8080/"
+var relayServerUrl = "http://127.0.0.1:8080/"
 const CHUNK_SIZE = 2 * 1024 * 1024 // 2 MiB
 const maxErrorsCount = 20
 
