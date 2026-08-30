@@ -238,6 +238,9 @@ export default async function () {
 		chunkSize: CHUNK_SIZE
 	})
 
+	const estimatedChunksCount = Math.ceil(totalSizeBytes / CHUNK_SIZE)
+	const filesFoldersCount = filesCount + foldersCount
+
 	// Create a transfer to the server
 	logDebugPerformance("shareCreation...")
 	const shareCreation = await fetch(`${relayServerUrl}/shares/create`, {
@@ -248,7 +251,12 @@ export default async function () {
 		body: JSON.stringify({
 			filesCount: filesCount,
 			foldersCount: foldersCount,
-			totalSize: totalSizeBytes
+			totalSize: totalSizeBytes,
+			chunksMessagesCacheRatio: filesFoldersCount > 45_000 || estimatedChunksCount > 90_000
+				? 30 // if we need to send A LOT OF MESSAGES, then we reserve 30% for chunks and 70% for messages
+				: filesFoldersCount > 12_000 || estimatedChunksCount > 24_000
+					? 50 // if we need to send a lot of messages, then we reserve 50% for each category
+					: 80, // 80% of the cache is reserved for chunks and 20% for messages
 		}),
 	}).catch(error => {
 		displayFatalError(`Could not reach the relay server at ${chalk.cyan(stripForDisplay(relayServerUrl))}.\n  Error: ${error.message}`, spinner)
