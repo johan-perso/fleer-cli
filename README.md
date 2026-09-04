@@ -15,25 +15,9 @@ Everything you dream about a one-to-one file sharing service: easy, privacy-firs
 
 **Requirements:**
 - You need to have [Bun](https://bun.sh/) installed on your system to run the Fleer CLI itself.
-- You need to have a Fleer relay server running somewhere. *As the project is still in development, there is no public relay server available yet.*
+- You need to have a Fleer relay server running somewhere. *As the project is still in development, there is no public relay server available yet.*  
+Instructions to selfhost the relay can be found in the associated [README.md](https://github.com/johan-perso/fleer-relay#hosting).
 
-**Selfhosting the [relay server](https://github.com/johan-perso/fleer-relay/):**
-```bash
-git clone https://github.com/johan-perso/fleer-relay.git
-cd fleer-relay
-cp .env.example .env
-
-# 1. Run in development mode using Dart SDK (if you have it installed on your machine)
-dart pub get
-dart run bin/server.dart
-
-# 2. Run in production mode using Docker
-docker build -t experimental-fleer-relay .
-docker run -p 8080:8080 experimental-fleer-relay
-
-# In either case, the relay server will be available at localhost:8080,
-# this URL needs to be set in the `src/send.js` file of the Fleer CLI project.
-```
 
 **Installing the CLI:**
 ```bash
