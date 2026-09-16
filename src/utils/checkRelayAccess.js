@@ -24,7 +24,7 @@ export default async function ({ relayUrl, spinner, logDebugPerformance, chunkSi
 
 	if(!relayServerInfosJson) displayFatalError(`Could not reach the relay server at ${chalk.cyan(relayUrl)}.`, spinner)
 	if(relayServerInfosJson?.error) {
-		displayFatalError(`Relay server threw an error (${chalk.dim(relayServerInfosJson?.data?.error || relayServerInfosJson?.error)}):\n  ${relayServerInfosJson?.data?.message || relayServerInfosJson?.message || JSON.stringify(relayServerInfosJson)}.`, spinner)
+		displayFatalError(`Relay server threw an error (${chalk.dim("case 6")}) (${chalk.dim(relayServerInfosJson?.data?.error || relayServerInfosJson?.error)}):\n  ${relayServerInfosJson?.data?.message || relayServerInfosJson?.message || JSON.stringify(relayServerInfosJson)}.`, spinner)
 	}
 	if(!relayServerInfosJson?.data?.message.includes("Fleer Relay API")) displayFatalError(`The relay server at ${chalk.cyan(relayUrl)} doesn't seem to be a Fleer Relay server.`, spinner)
 	if(!relayServerInfosJson?.data?.server?.maxChunkBytes) displayFatalError(`The relay server at ${chalk.cyan(relayUrl)} doesn't specify a maximum amount of bytes allowed per file chunk.\nThis is likely due to a misconfiguration or an unsupported relay server.\nPlease contact the relay server administrator for further assistance.`, spinner)

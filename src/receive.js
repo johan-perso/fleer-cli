@@ -89,7 +89,7 @@ export default async function () {
 	const spinner = ora("Checking relay server...").start()
 	globalThis.spinner = spinner
 	while(relayUrl.endsWith("/")) relayUrl = relayUrl.slice(0, -1)
-	await checkRelayAccess({
+	const relayServerInfosJson = await checkRelayAccess({
 		relayUrl: relayUrl,
 		spinner,
 		logDebugPerformance,
@@ -123,7 +123,7 @@ export default async function () {
 		if(statusCode == 404) {
 			displayFatalError(`No transfer associated to this Share Key was found on the relay server.\nShare Key: ${chalk.cyan(shareKey)}\nRelay URL: ${chalk.cyan(relayUrl)}`, spinner)
 		} else {
-			displayFatalError(`Relay server threw an error (${chalk.dim(stripForDisplay(shareCreationJson?.data?.error || shareCreationJson?.error))}):\n${stripForDisplay(shareDetailsJson?.data?.message || shareDetailsJson?.message || JSON.stringify(shareDetailsJson))}`, spinner)
+			displayFatalError(`Relay server threw an error (${chalk.dim("case 5")}) (${chalk.dim(stripForDisplay(shareCreationJson?.data?.error || shareCreationJson?.error))}):\n${stripForDisplay(shareDetailsJson?.data?.message || shareDetailsJson?.message || JSON.stringify(shareDetailsJson))}`, spinner)
 		}
 	}
 	lastChunkId = shareDetailsJson?.data?.lastChunkId || null
@@ -173,7 +173,11 @@ export default async function () {
 	if (!await exists(saveDirectory)) await mkdir(saveDirectory, { recursive: true })
 
 	let writingChunks = {}
-	const fileChunksCorrelationTable = []
+	const dataChunksCorrelationTable = []
+
+	var hashesCheck = ""
+	var lastReceivedHashChunk = null
+	var lastHashChunk = null
 
 	var lastEventType = null
 	var lastEventCount = 0
@@ -186,7 +190,7 @@ export default async function () {
 
 	var receivedBytesFromRelay = 0
 	var isProcessingChunk = false
-	var shouldIgnoreChunks = false
+	var downloadedAllFiles = false
 	var mbps = null
 	var mbpsEmoji = "📈"
 
@@ -312,7 +316,7 @@ export default async function () {
 			_updateFilesDownloadingSpinner()
 			break
 		case "fatal": // connection is closed afterwards
-			displayFatalError(`Relay server threw an error (${chalk.dim(stripForDisplay(message?.data?.error || message?.error))}):\n${stripForDisplay(message?.data?.message || message?.message || JSON.stringify(message))}.`, spinner)
+			displayFatalError(`Relay server threw an error (${chalk.dim("case 6")}) (${chalk.dim(stripForDisplay(message?.data?.error || message?.error))}):\n${stripForDisplay(message?.data?.message || message?.message || JSON.stringify(message))}.`, spinner)
 			break
 		case "connectedToShare":
 			if(!isConnectedToShareDisplayedOnce) spinner.succeed("Real-time connection established.")
@@ -382,9 +386,21 @@ export default async function () {
 				return displayFatalError(`Could not decrypt a message from the sender.\nThis is likely due to an incorrect encryption key or a corrupted transfer.\nError: ${error?.message || error?.stack}`, spinner)
 			}
 
-			if(unencryptedMessage?.dataType == "FileChunks") registerChunkForFile(unencryptedMessage)
+			if(unencryptedMessage?.dataType == "DataChunks") registerChunkForData(unencryptedMessage)
 			else if(unencryptedMessage?.dataType == "TransferFinished" && isDownloadingProcessEnded) {
 				if (globalThis.debugPerformances === true) await saveDebugPerformances()
+
+				// If the spinner is still spinning, wait a little bit for it to stop before exiting
+				var spinnerCheckI = 0
+				while(spinner.isSpinning && spinnerCheckI <= 10) {
+					await new Promise(resolve => setTimeout(resolve, 100))
+					spinnerCheckI++
+				}
+				if(spinner.isSpinning) {
+					_updateFilesDownloadingSpinner()
+					spinner.succeed()
+				}
+
 				process.exit()
 			}
 			break
@@ -402,7 +418,11 @@ export default async function () {
 			process.exit(1)
 			break
 		case "restartTransfer":
-			if (shouldIgnoreChunks) return logDebugPerformance("Ignoring restartTransfer message because shouldIgnoreChunks is set to true.")
+			if (downloadedAllFiles) {
+				spinner.stop()
+				displayFatalError(`Transfer was interrupted but can't be restarted because all files were already downloaded (${chalk.dim(stripForDisplay(message?.data?.message || "unknown reason"))}).`)
+				return logDebugPerformance("Ignoring restartTransfer message because downloadedAllFiles is set to true.")
+			}
 
 			acknowledgeQueue.length = 0
 			socketQueue.queue.length = 0
@@ -431,7 +451,8 @@ export default async function () {
 			mbpsHistory.length = 0
 
 			writingChunks = {}
-			fileChunksCorrelationTable.length = 0
+			dataChunksCorrelationTable.length = 0
+			hashesCheck = ""
 
 			lastSocketWarning = `Transfer was interrupted and needs to be restarted (${chalk.dim(stripForDisplay(message?.data?.message || "unknown reason"))}).`
 			_updateFilesDownloadingSpinner()
@@ -450,7 +471,6 @@ export default async function () {
 		}
 
 		// Handle binary data (such as chunks)
-		if (shouldIgnoreChunks) return logDebugPerformance("Ignoring received chunk because shouldIgnoreChunks is set to true.")
 		isProcessingChunk = true
 		logDebugPerformance("Received a binary chunk from relay server, analyzing it...")
 		const view = new DataView(event.data)
@@ -470,26 +490,35 @@ export default async function () {
 		const plain = await cipher.decryptChunk(payload, index)
 		logDebugPerformance(`Decrypted chunk ${index} (size after decryption: ${plain.length} bytes)`)
 
-		const fileForChunk = getFileForChunk(index)
-		if (!fileForChunk) {
-			return displayFatalError(`Could not find any file associated to chunk ${chalk.cyan(`#${index}`)}.\nThis is likely due to a problem with the sender client that didn't told us about this chunk, or the relay server that didn't forwarded the correct information.`, spinner)
+		const dataForChunk = getDataForChunk(index)
+		if (!dataForChunk) {
+			return displayFatalError(`Could not find any details associated to chunk ${chalk.cyan(`#${index}`)}.\nThis is likely due to a problem with the sender client that didn't told us about this chunk, or the relay server that didn't forwarded the correct information.`, spinner)
 		}
 
-		if(fileForChunk.path != currentFileOriginalPath) {
-			currentFilePosition++
-			currentFileOriginalPath = fileForChunk.path
-			_updateFilesDownloadingSpinner()
-		}
+		switch(dataForChunk.chunksType) {
+		case "HashesResult":
+			hashesCheck += Buffer.from(plain).toString("utf-8")
+			lastReceivedHashChunk = index
+			if(lastReceivedHashChunk != null && lastReceivedHashChunk >= lastHashChunk) startHashCheck()
+			break
+		case "File":
+			if (downloadedAllFiles) return logDebugPerformance("Ignoring received chunk because downloadedAllFiles is set to true.")
+			if(dataForChunk.path != currentFileOriginalPath) {
+				currentFilePosition++
+				currentFileOriginalPath = dataForChunk.path
+				_updateFilesDownloadingSpinner()
+			}
 
-		if (ignoredFilesPath.includes(fileForChunk.path)) {
-			logDebugPerformance(`Ignoring chunk ${index} because its associated file "${fileForChunk.path}" is in the ignored files list.`)
-			currentFileDisplayName = stripForDisplay(path.basename(fileForChunk.path))
-			currentFileBeingIgnored = true
-			_updateFilesDownloadingSpinner()
-		} else {
+			if (ignoredFilesPath.includes(dataForChunk.path)) {
+				logDebugPerformance(`Ignoring chunk ${index} because its associated file "${dataForChunk.path}" is in the ignored files list.`)
+				currentFileDisplayName = stripForDisplay(path.basename(dataForChunk.path))
+				currentFileBeingIgnored = true
+				_updateFilesDownloadingSpinner()
+				break
+			}
 			var savePath = null
 			try {
-				savePath = renamedFilesPath[fileForChunk.path] || sanitizePath(saveDirectory, fileForChunk.path)
+				savePath = renamedFilesPath[dataForChunk.path] || sanitizePath(saveDirectory, dataForChunk.path)
 			} catch (error) {
 				return displayFatalError(`Could not determine a valid save path for chunk ${chalk.cyan(`#${index}`)}.\nThis is likely due to a problem with the sender client that didn't sent us valid informations about this chunk.\nError: ${error?.message || error?.stack}`, spinner)
 			}
@@ -499,27 +528,27 @@ export default async function () {
 
 			try {
 				logDebugPerformance(`Saving chunk ${index}...`)
-				if(!writingChunks[fileForChunk.path]) {
+				if(!writingChunks[dataForChunk.path]) {
 					currentFileDownloadingBytes = 0
 
 					// Check what to do if the file already exists
 					if (await exists(savePath)) {
-						const actionForExistingFile = await decideActionForExistingFile(savePath, fileForChunk)
+						const actionForExistingFile = await decideActionForExistingFile(savePath, dataForChunk)
 						if (!actionForExistingFile?.continue) throw new Error("ignore") // because "return" would not execute some of post-saving code
-						savePath = renamedFilesPath[fileForChunk.path] || actionForExistingFile?.savePath || savePath
+						savePath = renamedFilesPath[dataForChunk.path] || actionForExistingFile?.savePath || savePath
 					}
 
 					// Create directories if needed, and create a file stream writer for this file
 					if (!await exists(path.dirname(savePath))) await mkdir(path.dirname(savePath), { recursive: true })
-					writingChunks[fileForChunk.path] = await Bun.file(savePath, { create: true }).writer({ highWaterMark: 100 * 1024 * 1024 })
+					writingChunks[dataForChunk.path] = await Bun.file(savePath, { create: true }).writer({ highWaterMark: 100 * 1024 * 1024 })
 				}
 
-				currentFileSize = fileForChunk.size
+				currentFileSize = dataForChunk.size
 				currentFileDisplayName = stripForDisplay(path.basename(savePath))
 				currentFileBeingIgnored = false
 				_updateFilesDownloadingSpinner()
 
-				await writingChunks[fileForChunk.path].write(plain)
+				await writingChunks[dataForChunk.path].write(plain)
 				logDebugPerformance(`Saved chunk ${index}`)
 
 				receivedBytesFromRelay += plain.length
@@ -532,11 +561,16 @@ export default async function () {
 			}
 
 			_calculateMbps()
+
+			break
+		default:
+			displayFatalError(`Received a chunk ${chalk.cyan(`#${index}`)} with an unknown chunksType "${chalk.dim(stripForDisplay(dataForChunk.chunksType))}".\nThis is likely due to an incompatibility between the sender client and this client.`, spinner)
+			break
 		}
 
 		// If we finished processing the last file, end its associated file stream writer to free up memory
 		if (Object.keys(writingChunks).length >= 2) for (const name in writingChunks) {
-			if (name == fileForChunk.path) continue
+			if (name == dataForChunk.path) continue
 
 			logDebugPerformance(`Ending file stream for ${name} to free up memory...`)
 			await writingChunks[name].end()
@@ -548,41 +582,61 @@ export default async function () {
 
 		acknowledgeChunks(index)
 		logDebugPerformance(`Finished processing chunk ${index} (${socketQueue.queue.length} messages in queue)`)
+
+		while(acknowledgeQueue.length > (relayServerInfosJson?.server?.maxAcknowledgedChunksPerMessage || 400)) {
+			await new Promise(resolve => setTimeout(resolve, 100)) // relay server cap how much chunks can be acknowledged at once, so we stop sending chunks until the queue is smaller
+		}
+
 		isProcessingChunk = false
 	}
 
-	// Sender is sending FileChunks encrypted messages to tell us which chunk belongs to which file, so we can write the decrypted chunk to the correct file
-	function registerChunkForFile(socketMessage) {
-		const existing = fileChunksCorrelationTable.find(r => r.from === socketMessage.from)
+	// Sender uses DataChunks encrypted messages to tell us what chunk belongs to what, so we can write decrypted chunk to a file for example
+	function registerChunkForData(socketMessage) {
+		// If the chunk is about a file, but it has no associated path or size
+		if (socketMessage.chunksType == "File" && (!socketMessage.path || !socketMessage.size)) {
+			return displayFatalError(`Received a message from the sender that is missing required information.\nThis is likely due to a problem with the client used by the sender that didn't sent us valid informations about this chunk.\nDataChunks is missing 'path' or 'size'.\nMessage: ${JSON.stringify(socketMessage)}`, spinner)
+		}
+
+		// If the chunk is about an HashesResult but it's not the hashesType we asked
+		if (socketMessage.chunksType == "HashesResult" && socketMessage.hashesType != "SHA-256") {
+			return displayFatalError(`The sender tried to do an integrity check with an unsupported hashing method ${chalk.dim(stripForDisplay(socketMessage.hashesType))}.\nThis is likely due to a problem with the client used by the sender that is not coded properly.`, spinner)
+		}
+		if (socketMessage.chunksType == "HashesResult" && socketMessage?.to != null && typeof socketMessage?.to == Number) {
+			lastHashChunk = socketMessage.to
+			if(lastReceivedHashChunk != null && lastReceivedHashChunk >= lastHashChunk) startHashCheck()
+		}
+
+		const existing = dataChunksCorrelationTable.find(r => r.from === socketMessage.from)
 		if (existing) return // already registered
-		fileChunksCorrelationTable.push({ from: socketMessage.from, name: path.basename(socketMessage.path), size: socketMessage.size, path: socketMessage.path })
-		fileChunksCorrelationTable.sort((a, b) => a.from - b.from) // keep the list sorted by 'from' index
+		dataChunksCorrelationTable.push({ chunksType: socketMessage?.chunksType || "File", from: socketMessage?.from, name: socketMessage?.path ? path.basename(socketMessage.path) : null, size: socketMessage?.size, path: socketMessage?.path })
+		dataChunksCorrelationTable.sort((a, b) => a.from - b.from) // keep the list sorted by 'from' index
 
 		// The sender is free to send us more files than what was initially told to us
-		if (fileChunksCorrelationTable.length > filesCount) {
-			filesCount = fileChunksCorrelationTable.length
+		const filesInCorrelationTable = dataChunksCorrelationTable.filter(dc => dc.chunksType == "File")
+		if (filesInCorrelationTable.length > filesCount) {
+			filesCount = filesInCorrelationTable.length
 			_updateFilesDownloadingSpinner()
 		}
 	}
-	function getFileForChunk(index) {
+	function getDataForChunk(index) {
 		let match = null
-		for (const r of fileChunksCorrelationTable) {
+		for (const r of dataChunksCorrelationTable) {
 			if (r.from <= index) match = r
 			else break // list is ordered, so we can stop searching once we find a range that starts after the index
 		}
 		return match // null if no match found, or the last matching range if found
 	}
 
-	async function decideActionForExistingFile(savePath, fileForChunk) {
-		if (needRenamingFilesPath.includes(fileForChunk.path)) {
+	async function decideActionForExistingFile(savePath, dataForChunk) {
+		if (needRenamingFilesPath.includes(dataForChunk.path)) {
 			savePath = await incrementFilePath(savePath)
-			renamedFilesPath[fileForChunk.path] = savePath
+			renamedFilesPath[dataForChunk.path] = savePath
 			return { continue: true, savePath }
-		} else if ((ignoreAllExistingFiles && !canOverwriteFilesPath.includes(fileForChunk.path)) || ignoredFilesPath.includes(fileForChunk.path)) {
+		} else if ((ignoreAllExistingFiles && !canOverwriteFilesPath.includes(dataForChunk.path)) || ignoredFilesPath.includes(dataForChunk.path)) {
 			logDebugPerformance(`Ignoring existing file "${savePath}" as per user choice.`)
-			if(!ignoredFilesPath.includes(fileForChunk.path)) ignoredFilesPath.push(fileForChunk.path)
+			if(!ignoredFilesPath.includes(dataForChunk.path)) ignoredFilesPath.push(dataForChunk.path)
 			return { continue: false, savePath }
-		} else if (overwriteAllExistingFiles || canOverwriteFilesPath.includes(fileForChunk.path)) {
+		} else if (overwriteAllExistingFiles || canOverwriteFilesPath.includes(dataForChunk.path)) {
 			logDebugPerformance(`Deleting existing file "${savePath}" as per user choice.`)
 			try {
 				await trash(savePath)
@@ -592,8 +646,8 @@ export default async function () {
 			logDebugPerformance(`Deleted existing file "${savePath}" to overwrite it with the new one.`)
 			return { continue: true, savePath }
 		} else {
-			await askActionForExistingFile(savePath, fileForChunk.path)
-			return decideActionForExistingFile(savePath, fileForChunk)
+			await askActionForExistingFile(savePath, dataForChunk.path)
+			return decideActionForExistingFile(savePath, dataForChunk)
 		}
 	}
 
@@ -634,7 +688,7 @@ export default async function () {
 		return savePath
 	}
 
-	// Function that need to be called when the download is ended (all chunks received and written to disk)
+	// Function that need to be called when the download is ended (all file chunks received and written to disk)
 	async function finishDownload() {
 		// If we are currently saving a chunk file, we need to wait for it to finish to avoid corruption,
 		// even if that's clearly not supposed to happen
@@ -642,7 +696,7 @@ export default async function () {
 			await new Promise(resolve => setTimeout(resolve, 500))
 		}
 
-		shouldIgnoreChunks = true // prevent any new chunk from being processed
+		downloadedAllFiles = true // prevent any new chunk from being processed
 
 		endedDownloadTime = Date.now()
 		isDownloadingProcessEnded = true
@@ -653,6 +707,8 @@ export default async function () {
 			data: await cipher.encryptJson({
 				highPriority: false,
 				dataType: "DownloadFinished",
+				requestHashes: true,
+				hashesType: "SHA-256"
 			})
 		}))
 
@@ -663,6 +719,42 @@ export default async function () {
 			logDebugPerformance(`Ended file stream for ${name}`)
 			delete writingChunks[name]
 		}
+	}
+
+	// Function to start the integrity check of the received files (all hashes chunks received)
+	async function startHashCheck() {
+		logDebugPerformance("Starting integrity check of received files... Parsing JSON...")
+		if(!hashesCheck) return displayFatalError("Integrity check failed: no hashes received from the sender.", spinner)
+		var hashesCheckParsed = {}
+
+		// Parse the hashes received from the sender
+		try {
+			hashesCheckParsed = JSON.parse(hashesCheck)
+		} catch (error) {
+			return displayFatalError(`Integrity check failed: could not parse the hashes received from the sender.\nError: ${error?.message || error?.stack}`, spinner)
+		}
+		if(!hashesCheckParsed || typeof hashesCheckParsed !== "object") {
+			return displayFatalError("Integrity check failed: parsed hashes is not a valid object, or is an empty object.", spinner)
+		}
+
+		// Compare the hashes of the received files with the hashes received from the sender
+		logDebugPerformance("Parsed JSON. Comparing hashes of received files with the hashes received from the sender...")
+		for (const hashObject of Object.entries(hashesCheckParsed)) {
+			const virtualPath = hashObject[0]
+			const hash = hashObject[1]
+
+			// TODO: actually check hash
+			logDebugPerformance(`Hash of "${virtualPath}" --> "${hash}"`)
+		}
+
+		// Tell the sender we finished the integrity check
+		socket.send(JSON.stringify({
+			type: "SendMsgToOtherWay",
+			data: await cipher.encryptJson({
+				highPriority: false,
+				dataType: "IntegrityCheckFinished"
+			})
+		}))
 	}
 
 	// Connect to the relay server via WebSocket

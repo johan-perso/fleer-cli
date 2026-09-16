@@ -6,6 +6,7 @@ import QRCode from "qrcode"
 import path from "node:path"
 import { lstat, readdir } from "node:fs/promises"
 import { tmpdir } from "node:os"
+import { createHash } from "crypto"
 
 import { stripForDisplay } from "./utils/stripText.js"
 import getAbsoluteLowest from "./utils/absoluteLowest.js"
@@ -231,7 +232,7 @@ export default async function () {
 	logDebugPerformance("---------------")
 	spinner.start("Creating the transfer...")
 	while(relayServerUrl.endsWith("/")) relayServerUrl = relayServerUrl.slice(0, -1)
-	await checkRelayAccess({
+	const relayServerInfosJson = await checkRelayAccess({
 		relayUrl: relayServerUrl,
 		spinner,
 		logDebugPerformance,
@@ -269,7 +270,7 @@ export default async function () {
 		displayFatalError(`Could not parse the response from the relay server.\n  HTTP Code: ${responseStatusCode}\n  Error: ${error.message}`, spinner)
 	}
 	if(shareCreationJson?.error) {
-		displayFatalError(`Relay server threw an error (${chalk.dim(stripForDisplay(shareCreationJson?.data?.error || shareCreationJson?.error))}):\n  ${stripForDisplay(shareCreationJson?.data?.message || shareCreationJson?.message || JSON.stringify(shareCreationJson))}.`, spinner)
+		displayFatalError(`Relay server threw an error (${chalk.dim("case 1")}) (${chalk.dim(stripForDisplay(shareCreationJson?.data?.error || shareCreationJson?.error))}):\n  ${stripForDisplay(shareCreationJson?.data?.message || shareCreationJson?.message || JSON.stringify(shareCreationJson))}.`, spinner)
 	}
 	logDebugPerformance("shareCreation!")
 	const shareId = shareCreationJson?.data?.shareId
@@ -323,7 +324,7 @@ export default async function () {
 		}
 		if(sendPrimaryDetailsJson?.error) {
 			if(sendPrimaryDetailsJson?.error == "body_too_large" && !withoutStructure) return sendPrimaryDetailsToRelay(true) // retry without structure
-			displayFatalError(`Relay server threw an error (${chalk.dim(stripForDisplay(sendPrimaryDetailsJson?.data?.error || sendPrimaryDetailsJson?.error))}):\n  ${stripForDisplay(sendPrimaryDetailsJson?.data?.message || sendPrimaryDetailsJson?.message || JSON.stringify(sendPrimaryDetailsJson))}.`, spinner)
+			displayFatalError(`Relay server threw an error (${chalk.dim("case 2")}) (${chalk.dim(stripForDisplay(sendPrimaryDetailsJson?.data?.error || sendPrimaryDetailsJson?.error))}):\n  ${stripForDisplay(sendPrimaryDetailsJson?.data?.message || sendPrimaryDetailsJson?.message || JSON.stringify(sendPrimaryDetailsJson))}.`, spinner)
 		}
 		logDebugPerformance("Sent primaryDetails!")
 
@@ -365,6 +366,10 @@ export default async function () {
 	var currentFileSentBytes = 0
 	var currentChunkSentBytes = 0
 
+	var isHashingFiles = false
+	var hashingCurrentProcess = ""
+	var hashedFilesCount = 0
+
 	var lastSocketWarning = null
 	var spinnerFailed = false
 	function _updateFilesSendingSpinner(isProcessEnding = false) {
@@ -395,8 +400,20 @@ export default async function () {
 			newText += `\n  ${chalk.dim("Transfer was interrupted. Waiting for the receiver to reconnect...")}`
 		} else if(!spinnerFailed) {
 			const totalPercentage = displayedTotalSize > 0 ? Math.floor((sentBytesToRelayDisplay / displayedTotalSize) * 100) : 0
-			newText += `\n\n${chalk.dim(`sent ${chalk.cyan(filesize(sentBytesToRelayDisplay))} / ${chalk.cyan(filesize(displayedTotalSize))}${totalPercentage > 100 ? "" : ` (${totalPercentage}%)`}`)}`
+			newText += `\n\n${chalk.dim(`sent ${chalk.cyan(filesize(sentBytesToRelayDisplay))} / ${chalk.cyan(filesize(displayedTotalSize))}${totalPercentage >= 100 ? "" : ` (${totalPercentage}%)`}`)}`
 			newText += `\n${chalk.dim(`use ${chalk.cyan("Ctrl+C")} to cancel transfer`)}`
+		}
+
+		if(isHashingFiles) {
+			const hashingPercentage = filesCount > 0 ? Math.floor((hashedFilesCount / filesCount) * 100) : 0
+			const textHashingCurrentProcess = hashingCurrentProcess == "hashing"
+				? "processing hash"
+				: hashingCurrentProcess == "sending"
+					? "sending to receiver"
+					: hashingCurrentProcess == "sent"
+						? "waiting for receiver"
+						: "doing something"
+			newText += `\n\n${chalk.cyan("◌")} Checking integrity of files (${textHashingCurrentProcess})... ${hashingPercentage >= 100 || hashingPercentage < 1 ? "" : chalk.dim(`(${hashingPercentage > 9 ? "" : "0"}${hashingPercentage}%)`)}`
 		}
 
 		if (lastSocketWarning) newText += `\n${chalk.yellow("⚠")} ${chalk.dim(breakLines(process.stdout.columns - 2, "  ", reduceString.maxLines(lastSocketWarning, 3, 2), { skipPrefixFirstLine: true }))}`
@@ -404,6 +421,129 @@ export default async function () {
 
 		if (spinner.text !== newText) spinner.text = newText
 		return newText
+	}
+
+	var virtualChunkIndex = 0
+	async function sendChunk({
+		payload,
+		currentFileChunkIndex,
+		fileIndex,
+		sendingProcessId,
+		chunksQuantity,
+		logPrefix
+	}) {
+		while (allowedBytesByRelay !== null && payload.length + sentBytesToRelayExact > allowedBytesByRelay) { // 1st check for allowed bytes by relay
+			isWaitingForRelayToAllowSending = true
+			_updateFilesSendingSpinner()
+			await new Promise(resolve => setTimeout(resolve, 500))
+		}
+
+		// We were waiting for the relay to allow sending, but now we can send again
+		if(isWaitingForRelayToAllowSending) {
+			isWaitingForRelayToAllowSending = false
+			_updateFilesSendingSpinner()
+		}
+		if(sendingProcessId && !_checkIfSendingProcessIsStillValid(sendingProcessId)) return
+
+		// We use a stream to send the chunk to the relay server, this allows us to track the progress of the upload and update the spinner accordingly
+		var lastProgressUpdateTime = Date.now()
+		const currentChunkStream = streamWithProgress(
+			payload,
+			(uploadedBytes) => {
+				const delta = uploadedBytes - currentChunkSentBytes
+				currentChunkSentBytes = uploadedBytes // total bytes currently uploaded for this chunk
+				sentBytesToRelayDisplay += delta // total bytes sent to the relay server while including this chunk
+
+				if (Date.now() - lastProgressUpdateTime > 400) { // max one update every 400ms
+					_calculateMbps()
+					_updateFilesSendingSpinner()
+					lastProgressUpdateTime = Date.now()
+				}
+			}
+		)
+		logDebugPerformance(`${logPrefix}: Starting to send chunk ${currentFileChunkIndex + 1}/${chunksQuantity} (virtualChunkIndex: ${virtualChunkIndex}) to relay server`)
+		const response = await fetch( // send the chunk to the relay server
+			`${relayServerUrl}/shares/chunks?shareId=${shareId}&chunkId=${virtualChunkIndex}`,
+			{
+				method: "PUT",
+				headers: {
+					"Content-Type": "application/octet-stream",
+					"Content-Length": payload.byteLength.toString()
+				},
+				body: currentChunkStream
+			},
+		).catch(error => {
+			displayFatalError(`Could not send chunk ${currentFileChunkIndex + 1}/${chunksQuantity} of file ${fileIndex ? fileIndex + 1 : "?"}/${files.length} (virtualChunkIndex: ${virtualChunkIndex}) to the relay server.\n  Error: ${error.message}`, spinner)
+		})
+
+		var responseJson
+		try {
+			responseJson = await response.json()
+		} catch (error) {
+			const responseStatusCode = response?.status || "unknown"
+			displayFatalError(`Could not parse the response from the relay server while sending chunk ${currentFileChunkIndex + 1}/${chunksQuantity} of file ${fileIndex ? fileIndex + 1 : "?"}/${files.length} (virtualChunkIndex: ${virtualChunkIndex}).\n  HTTP Code: ${responseStatusCode}\n  Error: ${error.message}`, spinner)
+		}
+		logDebugPerformance(`${logPrefix}: Sent chunk ${currentFileChunkIndex + 1}/${chunksQuantity} (virtualChunkIndex: ${virtualChunkIndex}) to relay server`)
+
+		isRelayTooBusy = false // reset the relay too busy state, if it was set before
+
+		function retry() {
+			return sendChunk(payload, currentFileChunkIndex, fileIndex, sendingProcessId, chunksQuantity, logPrefix)
+		}
+
+		if(responseJson?.error == "wait_before_uploading") { // 2nd check for allowed bytes by relay
+			currentFileChunkIndex-- // retry the same chunk
+			isWaitingForRelayToAllowSending = true
+			_updateFilesSendingSpinner()
+			await new Promise(resolve => setTimeout(resolve, 500))
+			return retry()
+		} else if(responseJson?.error == "server_too_busy") {
+			currentFileChunkIndex-- // retry the same chunk
+			isRelayTooBusy = true
+			_updateFilesSendingSpinner()
+			await new Promise(resolve => setTimeout(resolve, 3000))
+			return retry()
+		} else if(responseJson?.error == "missing_previous_chunk") { // transfer may have restarted during the upload
+			await new Promise(resolve => setTimeout(resolve, 500))
+			currentFileChunkIndex--
+			return retry()
+		} else if(responseJson?.error) {
+			displayFatalError(`Relay server threw an error (${chalk.dim("case 3")}) (${chalk.dim(stripForDisplay(responseJson?.data?.error || responseJson?.error))}):\n  ${stripForDisplay(responseJson?.data?.message || responseJson?.message || JSON.stringify(responseJson))}.`, spinner)
+		}
+
+		// We sent the chunk successfully, so we can update displayed spinner accordingly
+		virtualChunkIndex++
+		currentFileSentBytes += payload.length
+		if (responseJson?.data?.chunkId != null && responseJson?.data?.receivedBytes != null && !isNaN(responseJson.data.receivedBytes) && responseJson.data.receivedBytes >= 1) {
+			sentBytesToRelayExact = responseJson.data.receivedBytes // more trusted than what we calculate ourselves
+			if(sentBytesToRelayExact > sentBytesToRelayDisplay) sentBytesToRelayDisplay = sentBytesToRelayExact
+		}
+		_calculateMbps()
+		_updateFilesSendingSpinner()
+
+		// We update the allowedBytesByRelay value when sending a chunk, but we also update it when receiving a chunk update through the socket
+		if (responseJson.data.allowedBytesMax != null && !isNaN(responseJson.data.allowedBytesMax)) allowedBytesByRelay = responseJson.data.allowedBytesMax
+	}
+
+	async function deleteTransfer(spinnerSucceed = true) {
+		// Send to the receiver a message, it will be able to shut itself down when receiving it
+		socket.send(JSON.stringify({
+			type: "SendMsgToOtherWay",
+			data: await cipher.encryptJson({
+				highPriority: false,
+				dataType: "TransferFinished",
+			})
+		}))
+
+		await new Promise(resolve => setTimeout(resolve, 100)) // wait a bit to make sure the message is forwarded to receiver
+
+		socket.send(JSON.stringify({
+			type: "DeleteTransfer"
+		}))
+
+		if(spinnerSucceed) spinner.succeed(_updateFilesSendingSpinner(true))
+		if(globalThis.debugPerformances === true) await saveDebugPerformances()
+		process.exit()
 	}
 
 	// Method to handle incoming JSON WebSocket messages
@@ -429,7 +569,7 @@ export default async function () {
 			_updateFilesSendingSpinner()
 			break
 		case "fatal": // connection is closed afterwards
-			displayFatalError(`Relay server threw an error (${chalk.dim(stripForDisplay(message?.data?.error || message?.error))}):\n  ${stripForDisplay(message?.data?.message || message?.message || JSON.stringify(message))}.`, spinner)
+			displayFatalError(`Relay server threw an error (${chalk.dim("case 4")}) (${chalk.dim(stripForDisplay(message?.data?.error || message?.error))}):\n  ${stripForDisplay(message?.data?.message || message?.message || JSON.stringify(message))}.`, spinner)
 			break
 		case "connectedToShare":
 			if(!isConnectedToShareDisplayedOnce) spinner.succeed("Real-time connection established. Ready to send files.")
@@ -453,7 +593,10 @@ export default async function () {
 
 			spinner.start(_updateFilesSendingSpinner())
 
-			if(!currentSendingProcessId) sendFiles()
+			if(!currentSendingProcessId) {
+				virtualChunkIndex = 0
+				sendFiles()
+			}
 			break
 		case "msgFromReceiver":
 			var parsedJsonMessage = null
@@ -472,23 +615,85 @@ export default async function () {
 
 			// Delete transfer when the receiver has finished downloading all files, and we were waiting for it
 			if(unencryptedMessage?.dataType == "DownloadFinished" && isSendingProcessEnded) {
-				socket.send(JSON.stringify({
-					type: "SendMsgToOtherWay",
-					data: await cipher.encryptJson({
-						highPriority: false,
-						dataType: "TransferFinished",
-					})
-				}))
+				// If the receiver ask for a hash check with SHA-256, hash every file sent and send them to the receiver
+				if(unencryptedMessage?.requestHashes == true && unencryptedMessage?.hashesType == "SHA-256") {
+					var hashes = {}
+					hashingCurrentProcess = "hashing"
+					isHashingFiles = true
 
-				await new Promise(resolve => setTimeout(resolve, 100)) // wait a bit to make sure the message is forwarded to receiver
+					for (let fileIndex = 0; fileIndex < files.length; fileIndex++) { // TODO: try hashing multiple files in parallel (maybe according to the number of CPU cores?)
+						const file = files[fileIndex]
+						_updateFilesSendingSpinner()
 
-				socket.send(JSON.stringify({
-					type: "DeleteTransfer"
-				}))
+						try {
+							logDebugPerformance(`${file.physicalPath}: hashing file...`)
+							const hash = await hashFileStreaming(file.physicalPath)
+							logDebugPerformance(`${file.physicalPath}: hashed file (SHA-256 ${hash})!`)
+							hashes[file.virtualPath] = hash
+						} catch (err) {
+							hashes[file.virtualPath] = null
+							displayFatalError(`Could not hash file "${file.virtualPath}".\nThis is likely due to a permission issue or a corrupted file.\nError: ${err?.message || err?.stack}`, spinner)
+						}
 
-				spinner.succeed(_updateFilesSendingSpinner(true))
-				if (globalThis.debugPerformances === true) await saveDebugPerformances()
-				process.exit()
+						hashedFilesCount++
+						_updateFilesSendingSpinner()
+					}
+
+					logDebugPerformance("Sending DataChunks (for the HashesResult) info to relay server...")
+					hashingCurrentProcess = "sending"
+					socket.send(JSON.stringify({
+						type: "SendMsgToOtherWay",
+						data: await cipher.encryptJson({
+							highPriority: true,
+							dataType: "DataChunks",
+							chunksType: "HashesResult",
+							from: virtualChunkIndex,
+							hashesType: "SHA-256"
+						})
+					}))
+					logDebugPerformance("Sent DataChunks (for the HashesResult) info!")
+
+					// Chunk the list of hashes and send them
+					const hashesString = JSON.stringify(hashes)
+					const chunksQuantity = Math.ceil(hashesString.length / CHUNK_SIZE)
+					for (let currentFileChunkIndex = 0; currentFileChunkIndex < chunksQuantity; currentFileChunkIndex++) {
+						logDebugPerformance(`HashesResult: Slicing chunk ${currentFileChunkIndex + 1}/${chunksQuantity} (virtualChunkIndex: ${virtualChunkIndex})`)
+						const slice = hashesString.slice(currentFileChunkIndex * CHUNK_SIZE, (currentFileChunkIndex + 1) * CHUNK_SIZE)
+						const bytes = new Uint8Array(Buffer.from(slice, "utf-8"))
+						logDebugPerformance(`HashesResult: Sliced chunk ${currentFileChunkIndex + 1}/${chunksQuantity} (virtualChunkIndex: ${virtualChunkIndex})`)
+
+						logDebugPerformance(`HashesResult: Encrypting chunk ${currentFileChunkIndex + 1}/${chunksQuantity} (virtualChunkIndex: ${virtualChunkIndex})`)
+						const payload = await cipher.encryptChunk(bytes, virtualChunkIndex)
+						logDebugPerformance(`HashesResult: Encrypted chunk ${currentFileChunkIndex + 1}/${chunksQuantity} (virtualChunkIndex: ${virtualChunkIndex})`)
+
+						await sendChunk({
+							payload,
+							currentFileChunkIndex,
+							chunksQuantity,
+							logPrefix: "HashesResult",
+						})
+					}
+
+					hashingCurrentProcess = "sent"
+					socket.send(JSON.stringify({
+						type: "SendMsgToOtherWay",
+						data: await cipher.encryptJson({
+							highPriority: true,
+							dataType: "DataChunks",
+							chunksType: "HashesResult",
+							from: virtualChunkIndex,
+							to: virtualChunkIndex - 1,
+							hashesType: "SHA-256"
+						})
+					}))
+				} else { // if the receiver does not ask for a hash check, we can delete the transfer right now
+					deleteTransfer()
+				}
+			}
+
+			else if(unencryptedMessage?.dataType == "IntegrityCheckFinished") {
+				isHashingFiles = false
+				deleteTransfer()
 			}
 
 			break
@@ -505,6 +710,15 @@ export default async function () {
 		case "restartTransfer":
 			// As seen in the comment of allowedBytesMaxUpdate handler, the relay keep chunks in cache for a limited time.
 			// If the receiver ask for chunks that got deleted from the relay cache, transfer will have to be restarted from the beginning.
+
+			if (isHashingFiles) {
+				spinner.stop()
+				logDebugPerformance("Ignoring restartTransfer message because isHashingFiles is set to true.")
+				displayFatalError(`Transfer was interrupted but can't be restarted because all files were sent, received, and an integrity check was running (${chalk.dim(stripForDisplay(message?.data?.message || "unknown reason"))}).`, null, { exit: false })
+				await deleteTransfer(false)
+				process.exit(1)
+			}
+
 			socketQueue.queue.length = 0
 
 			spinnerFailed = false
@@ -523,6 +737,9 @@ export default async function () {
 			currentFilePosition = 1
 			currentFileSize = 0
 
+			isHashingFiles = false
+			hashedFilesCount = 0
+
 			mbps = 0
 			mbpsEmoji = "📈"
 			lastUploadedBytes = 0
@@ -538,6 +755,7 @@ export default async function () {
 			lastSocketWarning = `Transfer was interrupted and needs to be restarted (${chalk.dim(stripForDisplay(message?.data?.message || "unknown reason"))}).`
 			_updateFilesSendingSpinner()
 
+			virtualChunkIndex = 0
 			sendFiles()
 			break
 		}
@@ -555,6 +773,17 @@ export default async function () {
 		}
 
 		await appendSocketDebugEvent("(Sender) 🫷 Not processing binary formed message from relay.")
+	}
+
+	async function hashFileStreaming(path) {
+		const hash = createHash("sha256")
+		const stream = Bun.file(path).stream()
+
+		for await (const chunk of stream) {
+			hash.update(chunk)
+		}
+
+		return hash.digest("hex")
 	}
 
 	// Connect to the relay server via WebSocket
@@ -634,8 +863,6 @@ export default async function () {
 		isSendingProcessEnded = false
 		startSendingTime = Date.now()
 
-		var virtualChunkIndex = 0
-
 		// Loop through every file and send them chunk by chunk to the relay server, which will then be sent to the receiver
 		logDebugPerformance("---------------")
 		for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
@@ -654,18 +881,19 @@ export default async function () {
 
 			// Send infos about this file to the relay server, this allows the receiver to know where to save the chunks he's about to receive
 			if(!_checkIfSendingProcessIsStillValid(sendingProcessId)) return
-			logDebugPerformance(`${file.virtualPath}: sending FileChunks info to relay server`)
+			logDebugPerformance(`${file.virtualPath}: sending DataChunks info to relay server`)
 			socket.send(JSON.stringify({
 				type: "SendMsgToOtherWay",
 				data: await cipher.encryptJson({
 					highPriority: true,
-					dataType: "FileChunks",
+					dataType: "DataChunks",
+					chunksType: "File",
 					from: virtualChunkIndex,
 					size: file.size,
 					path: file.virtualPath
 				})
 			}))
-			logDebugPerformance(`${file.virtualPath}: sent FileChunks info`)
+			logDebugPerformance(`${file.virtualPath}: sent DataChunks info`)
 
 			// Loop through every chunk of the current file and send them to the relay server
 			for (let currentFileChunkIndex = 0; currentFileChunkIndex < total; currentFileChunkIndex++) {
@@ -680,94 +908,14 @@ export default async function () {
 				logDebugPerformance(`${file.virtualPath}: Encrypted chunk ${currentFileChunkIndex + 1}/${total} (virtualChunkIndex: ${virtualChunkIndex})`)
 				if(!_checkIfSendingProcessIsStillValid(sendingProcessId)) return
 
-				while (allowedBytesByRelay !== null && payload.length + sentBytesToRelayExact > allowedBytesByRelay) { // 1st check for allowed bytes by relay
-					isWaitingForRelayToAllowSending = true
-					_updateFilesSendingSpinner()
-					await new Promise(resolve => setTimeout(resolve, 500))
-				}
-
-				// We were waiting for the relay to allow sending, but now we can send again
-				if(isWaitingForRelayToAllowSending) {
-					isWaitingForRelayToAllowSending = false
-					_updateFilesSendingSpinner()
-				}
-				if(!_checkIfSendingProcessIsStillValid(sendingProcessId)) return
-
-				// We use a stream to send the chunk to the relay server, this allows us to track the progress of the upload and update the spinner accordingly
-				var lastProgressUpdateTime = Date.now()
-				const currentChunkStream = streamWithProgress(
+				await sendChunk({
 					payload,
-					(uploadedBytes) => {
-						const delta = uploadedBytes - currentChunkSentBytes
-						currentChunkSentBytes = uploadedBytes // total bytes currently uploaded for this chunk
-						sentBytesToRelayDisplay += delta // total bytes sent to the relay server while including this chunk
-
-						if (Date.now() - lastProgressUpdateTime > 400) { // max one update every 400ms
-							_calculateMbps()
-							_updateFilesSendingSpinner()
-							lastProgressUpdateTime = Date.now()
-						}
-					}
-				)
-				logDebugPerformance(`${file.virtualPath}: Starting to send chunk ${currentFileChunkIndex + 1}/${total} (virtualChunkIndex: ${virtualChunkIndex}) to relay server`)
-				const response = await fetch( // send the chunk to the relay server
-					`${relayServerUrl}/shares/chunks?shareId=${shareId}&chunkId=${virtualChunkIndex}`,
-					{
-						method: "PUT",
-						headers: {
-							"Content-Type": "application/octet-stream",
-							"Content-Length": payload.byteLength.toString()
-						},
-						body: currentChunkStream
-					},
-				).catch(error => {
-					displayFatalError(`Could not send chunk ${currentFileChunkIndex + 1}/${total} of file ${fileIndex + 1}/${files.length} (virtualChunkIndex: ${virtualChunkIndex}) to the relay server.\n  Error: ${error.message}`, spinner)
+					currentFileChunkIndex,
+					fileIndex,
+					sendingProcessId,
+					chunksQuantity: total,
+					logPrefix: file.virtualPath,
 				})
-
-				var responseJson
-				try {
-					responseJson = await response.json()
-				} catch (error) {
-					const responseStatusCode = response?.status || "unknown"
-					displayFatalError(`Could not parse the response from the relay server while sending chunk ${currentFileChunkIndex + 1}/${total} of file ${fileIndex + 1}/${files.length} (virtualChunkIndex: ${virtualChunkIndex}).\n  HTTP Code: ${responseStatusCode}\n  Error: ${error.message}`, spinner)
-				}
-				logDebugPerformance(`${file.virtualPath}: Sent chunk ${currentFileChunkIndex + 1}/${total} (virtualChunkIndex: ${virtualChunkIndex}) to relay server`)
-
-				isRelayTooBusy = false // reset the relay too busy state, if it was set before
-
-				if(responseJson?.error == "wait_before_uploading") { // 2nd check for allowed bytes by relay
-					currentFileChunkIndex-- // retry the same chunk
-					isWaitingForRelayToAllowSending = true
-					_updateFilesSendingSpinner()
-					await new Promise(resolve => setTimeout(resolve, 500))
-					continue
-				} else if(responseJson?.error == "server_too_busy") {
-					currentFileChunkIndex-- // retry the same chunk
-					isRelayTooBusy = true
-					_updateFilesSendingSpinner()
-					await new Promise(resolve => setTimeout(resolve, 3000))
-					continue
-				} else if(responseJson?.error == "missing_previous_chunk") { // transfer may have restarted during the upload
-					await new Promise(resolve => setTimeout(resolve, 500))
-					currentFileChunkIndex--
-					continue
-				} else if(responseJson?.error) {
-					displayFatalError(`Relay server threw an error (${chalk.dim(stripForDisplay(responseJson?.data?.error || responseJson?.error))}):\n  ${stripForDisplay(responseJson?.data?.message || responseJson?.message || JSON.stringify(responseJson))}.`, spinner)
-				}
-
-				// We sent the chunk successfully, so we can update displayed spinner accordingly
-				virtualChunkIndex++
-				currentFileSentBytes += payload.length
-				if (responseJson?.data?.chunkId != null && responseJson?.data?.receivedBytes != null && !isNaN(responseJson.data.receivedBytes) && responseJson.data.receivedBytes >= 1) {
-					sentBytesToRelayExact = responseJson.data.receivedBytes // more trusted than what we calculate ourselves
-					if(sentBytesToRelayExact > sentBytesToRelayDisplay) sentBytesToRelayDisplay = sentBytesToRelayExact
-				}
-				_calculateMbps()
-				_updateFilesSendingSpinner()
-
-				// We update the allowedBytesByRelay value when sending a chunk, but we also update it when receiving a chunk update through the socket
-				if (responseJson.data.allowedBytesMax != null && !isNaN(responseJson.data.allowedBytesMax)) allowedBytesByRelay = responseJson.data.allowedBytesMax
-
 				if(!_checkIfSendingProcessIsStillValid(sendingProcessId)) return
 			}
 
