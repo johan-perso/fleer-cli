@@ -20,6 +20,7 @@ import checkNonTlsConnection from "./utils/checkNonTlsConnection.js"
 import sanitizePath from "./utils/sanitizePath.js"
 import removeLinesFromConsole from "./utils/removeLinesFromConsole.js"
 import breakLines from "./utils/breakLines.js"
+import hashFileStreaming from "./utils/hashFileStreaming.js"
 
 const intlFormatter = new Intl.NumberFormat()
 
@@ -176,6 +177,8 @@ export default async function () {
 	const dataChunksCorrelationTable = []
 
 	var hashesCheck = ""
+	const hashesCheckIssues = []
+	var hashedFilesCount = 0
 	var lastReceivedHashChunk = null
 	var lastHashChunk = null
 
@@ -239,6 +242,7 @@ export default async function () {
 					: path.join(path.basename(process.cwd()), relativeSaveDirectory)
 
 			newText += `\n  File${filesCount > 1 ? "s" : ""} saved to ${chalk.cyan(stripForDisplay(displayedSaveDirectory))}`
+			newText += `\n  Integrity of ${chalk.cyan(intlFormatter.format(hashedFilesCount))} file${hashedFilesCount > 1 ? "s" : ""} checked with SHA-256.`
 		} else {
 			var totalPercentage = totalSizeBytes > 0 ? Math.floor((receivedBytesFromRelay / totalSizeBytes) * 100) : 0
 			if (totalPercentage > 99.9) totalPercentage = 100
@@ -249,6 +253,10 @@ export default async function () {
 
 		if (lastSocketWarning) newText += `\n${chalk.yellow("⚠")} ${chalk.dim(breakLines(process.stdout.columns - 2, "  ", reduceString.maxLines(lastSocketWarning, 3, 5), { skipPrefixFirstLine: true }))}`
 		if (isSenderDisconnected) newText += `\n${chalk.yellow("⚠")} ${chalk.dim(reduceString.maxLines("Sender seems to be disconnected.", 1, 5))}`
+
+		if (hashesCheckIssues.length) {
+			newText += `\n\n${chalk.yellow("⚠")} ${breakLines(process.stdout.columns - 2, "  ", `${hashesCheckIssues.length} file${hashesCheckIssues.length > 1 ? "s" : ""} has been altered or corrupted during the transfer.\n  This might be caused by a problem with the sender's device, a compromised/malicious relay server, or an unstable network connection.\n  In all cases, received files are kept on your disk, but you need to be sure that they are safe to use before opening them.`, { skipPrefixFirstLine: true })}`
+		}
 
 		if (spinner.text !== newText) spinner.text = newText
 		return newText
@@ -388,19 +396,10 @@ export default async function () {
 
 			if(unencryptedMessage?.dataType == "DataChunks") registerChunkForData(unencryptedMessage)
 			else if(unencryptedMessage?.dataType == "TransferFinished" && isDownloadingProcessEnded) {
+				// The receiver finished doing whatever it needed to do, and EVERYTHING is done, so we can exit the process now
+
+				spinner.succeed(_updateFilesDownloadingSpinner())
 				if (globalThis.debugPerformances === true) await saveDebugPerformances()
-
-				// If the spinner is still spinning, wait a little bit for it to stop before exiting
-				var spinnerCheckI = 0
-				while(spinner.isSpinning && spinnerCheckI <= 10) {
-					await new Promise(resolve => setTimeout(resolve, 100))
-					spinnerCheckI++
-				}
-				if(spinner.isSpinning) {
-					_updateFilesDownloadingSpinner()
-					spinner.succeed()
-				}
-
 				process.exit()
 			}
 			break
@@ -453,6 +452,8 @@ export default async function () {
 			writingChunks = {}
 			dataChunksCorrelationTable.length = 0
 			hashesCheck = ""
+			hashesCheckIssues.length = 0
+			hashedFilesCount = 0
 
 			lastSocketWarning = `Transfer was interrupted and needs to be restarted (${chalk.dim(stripForDisplay(message?.data?.message || "unknown reason"))}).`
 			_updateFilesDownloadingSpinner()
@@ -499,7 +500,7 @@ export default async function () {
 		case "HashesResult":
 			hashesCheck += Buffer.from(plain).toString("utf-8")
 			lastReceivedHashChunk = index
-			if(lastReceivedHashChunk != null && lastReceivedHashChunk >= lastHashChunk) startHashCheck()
+			if(lastReceivedHashChunk != null && lastReceivedHashChunk >= lastHashChunk) await startHashCheck()
 			break
 		case "File":
 			if (downloadedAllFiles) return logDebugPerformance("Ignoring received chunk because downloadedAllFiles is set to true.")
@@ -700,7 +701,7 @@ export default async function () {
 
 		endedDownloadTime = Date.now()
 		isDownloadingProcessEnded = true
-		spinner.succeed(_updateFilesDownloadingSpinner())
+		_updateFilesDownloadingSpinner() // doesn't succeed right now, we are still waiting for an ack from sender
 
 		socket.send(JSON.stringify({
 			type: "SendMsgToOtherWay",
@@ -740,12 +741,53 @@ export default async function () {
 		// Compare the hashes of the received files with the hashes received from the sender
 		logDebugPerformance("Parsed JSON. Comparing hashes of received files with the hashes received from the sender...")
 		for (const hashObject of Object.entries(hashesCheckParsed)) {
-			const virtualPath = hashObject[0]
-			const hash = hashObject[1]
+			const unsanitizedVirtualPath = hashObject[0]
+			if(unsanitizedVirtualPath == null || !unsanitizedVirtualPath?.length) {
+				logDebugPerformance("Skipping an invalid hash entry with no virtual path.")
+				continue
+			}
+			var virtualPath = sanitizePath(saveDirectory, unsanitizedVirtualPath)
 
-			// TODO: actually check hash
-			logDebugPerformance(`Hash of "${virtualPath}" --> "${hash}"`)
+			const receivedHash = hashObject[1]
+			if(receivedHash == null || !receivedHash?.length) {
+				logDebugPerformance(`Skipping an invalid hash entry for "${virtualPath}" with no hash value.`)
+				continue
+			}
+
+			logDebugPerformance(`Received hash of "${virtualPath}" --> "${receivedHash}". Starting comparison...`)
+
+			// Compare the hash of the received file with the hash received from the sender
+			try {
+				if(ignoredFilesPath.includes(unsanitizedVirtualPath)) {
+					logDebugPerformance(`Skipping integrity check for "${virtualPath}" because it is in the ignored files list.`)
+					continue
+				}
+				if(needRenamingFilesPath.includes(unsanitizedVirtualPath)) {
+					logDebugPerformance(`Changing virtual path for integrity check of "${virtualPath}" because it is in the renamed files list.`)
+					virtualPath = renamedFilesPath[unsanitizedVirtualPath] || virtualPath
+				}
+
+				const fileExists = await exists(virtualPath)
+				if(!fileExists) {
+					logDebugPerformance(`Integrity check failed for "${virtualPath}": file does not exist locally (maybe ignored).`)
+					continue
+				}
+
+				const fileHash = await hashFileStreaming(virtualPath)
+				if(fileHash !== receivedHash) {
+					logDebugPerformance(`Integrity check failed for "${virtualPath}": expected hash "${receivedHash}", but got "${fileHash}".`)
+					hashesCheckIssues.push(`"${virtualPath}": expected hash "${receivedHash}", but got "${fileHash}".`)
+					_updateFilesDownloadingSpinner()
+				} else {
+					logDebugPerformance(`Integrity check passed for "${virtualPath}".`)
+				}
+				hashedFilesCount++
+			} catch (error) {
+				logDebugPerformance(`Error while checking integrity of "${virtualPath}": ${error?.message || error?.stack}`)
+				displayFatalError(`Integrity check failed for "${virtualPath}": ${error?.message || error?.stack}`, spinner)
+			}
 		}
+		_updateFilesDownloadingSpinner()
 
 		// Tell the sender we finished the integrity check
 		socket.send(JSON.stringify({

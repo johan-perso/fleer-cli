@@ -6,7 +6,6 @@ import QRCode from "qrcode"
 import path from "node:path"
 import { lstat, readdir } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { createHash } from "crypto"
 
 import { stripForDisplay } from "./utils/stripText.js"
 import getAbsoluteLowest from "./utils/absoluteLowest.js"
@@ -24,6 +23,7 @@ import checkNonTlsConnection from "./utils/checkNonTlsConnection.js"
 import copyToClipboard from "./utils/copyToClipboard.js"
 import removeLinesFromConsole from "./utils/removeLinesFromConsole.js"
 import breakLines from "./utils/breakLines.js"
+import hashFileStreaming from "./utils/hashFileStreaming.js"
 
 var relayServerUrl = "http://127.0.0.1:8080/"
 const CHUNK_SIZE = 2 * 1024 * 1024 // 2 MiB
@@ -396,6 +396,7 @@ export default async function () {
 			const totalTime = Math.round((Date.now() - startSendingTime) / 1000)
 			newText += `\n  Took ${chalk.cyan(totalTime > 99 ? `${Math.floor(totalTime / 60)} min ${totalTime % 60} sec` : `${totalTime} sec`)} for ${chalk.cyan(filesize(sentBytesToRelayDisplay))}.`
 			if(!isProcessEnding) newText += `\n  ${chalk.dim("Waiting for receiver to finish downloading...")}`
+			else if(hashedFilesCount) newText += `\n  Integrity of ${chalk.cyan(intlFormatter.format(hashedFilesCount))} file${hashedFilesCount > 1 ? "s" : ""} checked with SHA-256.`
 		} else if(isSendingProcessInterrupted && !spinnerFailed) {
 			newText += `\n  ${chalk.dim("Transfer was interrupted. Waiting for the receiver to reconnect...")}`
 		} else if(!spinnerFailed) {
@@ -672,6 +673,7 @@ export default async function () {
 							chunksQuantity,
 							logPrefix: "HashesResult",
 						})
+						logDebugPerformance(`HashesResult: Sent chunk ${currentFileChunkIndex + 1}/${chunksQuantity} (virtualChunkIndex: ${virtualChunkIndex})`)
 					}
 
 					hashingCurrentProcess = "sent"
@@ -686,6 +688,7 @@ export default async function () {
 							hashesType: "SHA-256"
 						})
 					}))
+					logDebugPerformance("Sent DataChunks (for the HashesResult, + last chunk of hashes indication) info!")
 				} else { // if the receiver does not ask for a hash check, we can delete the transfer right now
 					deleteTransfer()
 				}
@@ -693,6 +696,8 @@ export default async function () {
 
 			else if(unencryptedMessage?.dataType == "IntegrityCheckFinished") {
 				isHashingFiles = false
+				hashingCurrentProcess = ""
+				_updateFilesSendingSpinner()
 				deleteTransfer()
 			}
 
@@ -773,17 +778,6 @@ export default async function () {
 		}
 
 		await appendSocketDebugEvent("(Sender) 🫷 Not processing binary formed message from relay.")
-	}
-
-	async function hashFileStreaming(path) {
-		const hash = createHash("sha256")
-		const stream = Bun.file(path).stream()
-
-		for await (const chunk of stream) {
-			hash.update(chunk)
-		}
-
-		return hash.digest("hex")
 	}
 
 	// Connect to the relay server via WebSocket
