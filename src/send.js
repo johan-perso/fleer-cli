@@ -27,6 +27,7 @@ import hashFileStreaming from "./utils/hashFileStreaming.js"
 
 var relayServerUrl = "http://127.0.0.1:8080/"
 const CHUNK_SIZE = 2 * 1024 * 1024 // 2 MiB
+var CHUNK_SIZE = 2 * 1024 * 1024 // 2 MiB
 const maxErrorsCount = 20
 
 const intlFormatter = new Intl.NumberFormat()
@@ -244,6 +245,7 @@ export default async function () {
 
 	// Create a transfer to the server
 	logDebugPerformance("shareCreation...")
+	const dateBeforeCreation = Date.now()
 	const shareCreation = await fetch(`${relayServerUrl}/shares/create`, {
 		method: "POST",
 		headers: {
@@ -296,6 +298,9 @@ export default async function () {
 			instance: null
 		}))
 	logDebugPerformance("Created primaryDetails!")
+
+	const preparationTimeCost = Date.now() - dateBeforeCreation
+	if(preparationTimeCost > 1000) CHUNK_SIZE = CHUNK_SIZE / 2
 
 	const cipher = await encryption.ShareCipher.create({ shareId, protocolIndicator: encryption.USED_PROTOCOL_INDICATOR })
 
