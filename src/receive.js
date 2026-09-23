@@ -257,7 +257,7 @@ export default async function () {
 		if (isSenderDisconnected) newText += `\n${chalk.yellow("⚠")} ${chalk.dim(reduceString.maxLines("Sender seems to be disconnected.", 1, 5))}`
 
 		if (hashesCheckIssues.length) {
-			newText += `\n\n${chalk.yellow("⚠")} ${breakLines(process.stdout.columns - 2, "  ", `${hashesCheckIssues.length} file${hashesCheckIssues.length > 1 ? "s" : ""} has been altered or corrupted during the transfer.\n  This might be caused by a problem with the sender's device, a compromised/malicious relay server, or an unstable network connection.\n  In all cases, received files are kept on your disk, but you need to be sure that they are safe to use before opening them.`, { skipPrefixFirstLine: true })}`
+			newText += `\n\n${chalk.yellow("⚠")} ${breakLines(process.stdout.columns - 2, "  ", `${hashesCheckIssues.length} file${hashesCheckIssues.length > 1 ? "s" : ""} have been altered or corrupted during the transfer.\n  This might be caused by a problem with the sender's device, a compromised/malicious relay server, or an unstable network connection.\n  In all cases, received files are kept on your disk, but you need to be sure that they are safe to use before opening them.`, { skipPrefixFirstLine: true })}`
 		}
 
 		if (spinner.text !== newText) spinner.text = newText
@@ -787,7 +787,7 @@ export default async function () {
 
 					const fileExists = await exists(virtualPath)
 					if(!fileExists) {
-						logDebugPerformance(`Integrity check failed for "${virtualPath}": file does not exist locally (maybe ignored).`)
+						hashesCheckIssues.push(`"${virtualPath}": file does not exist on disk, so integrity check cannot be performed.`)
 						continue
 					}
 
