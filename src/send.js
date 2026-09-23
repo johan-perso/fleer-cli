@@ -26,7 +26,6 @@ import breakLines from "./utils/breakLines.js"
 import hashFileStreaming from "./utils/hashFileStreaming.js"
 
 var relayServerUrl = "http://127.0.0.1:8080/"
-const CHUNK_SIZE = 2 * 1024 * 1024 // 2 MiB
 var CHUNK_SIZE = 2 * 1024 * 1024 // 2 MiB
 const maxErrorsCount = 20
 
@@ -356,6 +355,7 @@ export default async function () {
 	var isSendingProcessInterrupted = false
 	var isSendingProcessEnded = false
 	var startSendingTime = null
+	var ignoreTransferDeletionMessage = false
 
 	var lastEventType = null
 	var lastEventCount = 0
@@ -543,6 +543,7 @@ export default async function () {
 
 		await new Promise(resolve => setTimeout(resolve, 100)) // wait a bit to make sure the message is forwarded to receiver
 
+		ignoreTransferDeletionMessage = true
 		socket.send(JSON.stringify({
 			type: "DeleteTransfer"
 		}))
@@ -626,24 +627,33 @@ export default async function () {
 					var hashes = {}
 					hashingCurrentProcess = "hashing"
 					isHashingFiles = true
+					const startHashingDate = Date.now()
 
-					for (let fileIndex = 0; fileIndex < files.length; fileIndex++) { // TODO: try hashing multiple files in parallel (maybe according to the number of CPU cores?)
-						const file = files[fileIndex]
-						_updateFilesSendingSpinner()
+					_updateFilesSendingSpinner()
+					await new Promise(resolve => setTimeout(resolve, 100)) // wait a bit to make sure the spinner is updated before hashing files (may freeze entire process)
 
-						try {
-							logDebugPerformance(`${file.physicalPath}: hashing file...`)
-							const hash = await hashFileStreaming(file.physicalPath)
-							logDebugPerformance(`${file.physicalPath}: hashed file (SHA-256 ${hash})!`)
-							hashes[file.virtualPath] = hash
-						} catch (err) {
-							hashes[file.virtualPath] = null
-							displayFatalError(`Could not hash file "${file.virtualPath}".\nThis is likely due to a permission issue or a corrupted file.\nError: ${err?.message || err?.stack}`, spinner)
+					let nextFileIndex = 0
+					const hashRunner = async () => {
+						while (nextFileIndex < files.length) {
+							const file = files[nextFileIndex++]
+							_updateFilesSendingSpinner()
+
+							try {
+								logDebugPerformance(`${file.physicalPath}: hashing file...`)
+								const hash = await hashFileStreaming(file.physicalPath)
+								logDebugPerformance(`${file.physicalPath}: hashed file (SHA-256 ${hash})!`)
+								hashes[file.virtualPath] = hash
+							} catch (err) {
+								hashes[file.virtualPath] = null
+								displayFatalError(`Could not hash file "${file.virtualPath}".\nThis is likely due to a permission issue or a corrupted file.\nError: ${err?.message || err?.stack}`, spinner)
+							}
+
+							hashedFilesCount++
+							_updateFilesSendingSpinner()
 						}
-
-						hashedFilesCount++
-						_updateFilesSendingSpinner()
 					}
+					await Promise.all(Array.from({ length: Math.min(12, files.length) }, hashRunner)) // up to 12 hashing in parallel
+					logDebugPerformance(`Took ${Date.now() - startHashingDate}ms to hash ${files.length} file${files.length > 1 ? "s" : ""}.`)
 
 					logDebugPerformance("Sending DataChunks (for the HashesResult) info to relay server...")
 					hashingCurrentProcess = "sending"
@@ -681,7 +691,6 @@ export default async function () {
 						logDebugPerformance(`HashesResult: Sent chunk ${currentFileChunkIndex + 1}/${chunksQuantity} (virtualChunkIndex: ${virtualChunkIndex})`)
 					}
 
-					hashingCurrentProcess = "sent"
 					socket.send(JSON.stringify({
 						type: "SendMsgToOtherWay",
 						data: await cipher.encryptJson({
@@ -693,6 +702,8 @@ export default async function () {
 							hashesType: "SHA-256"
 						})
 					}))
+					hashingCurrentProcess = "sent"
+					_updateFilesSendingSpinner()
 					logDebugPerformance("Sent DataChunks (for the HashesResult, + last chunk of hashes indication) info!")
 				} else { // if the receiver does not ask for a hash check, we can delete the transfer right now
 					deleteTransfer()
@@ -713,6 +724,7 @@ export default async function () {
 			allowedBytesByRelay = message?.data?.allowedBytesMax
 			break
 		case "shareDeleted":
+			if(ignoreTransferDeletionMessage) return
 			spinner.stop()
 			displayFatalError(message?.data?.message || "Transfer was deleted for an unknown reason.")
 			process.exit(1)
@@ -740,6 +752,7 @@ export default async function () {
 			sentBytesToRelayDisplay = 0
 			sentBytesToRelayExact = 0
 			startSendingTime = null
+			ignoreTransferDeletionMessage = false
 
 			currentFileSentBytes = 0
 			currentChunkSentBytes = 0
@@ -809,6 +822,7 @@ export default async function () {
 	}
 	socket.onclose = (event) => {
 		const reason = event?.reason
+		if(reason == "share_deleted" && ignoreTransferDeletionMessage) return
 		lastSocketWarning = `Real-time connection to the relay server was closed ${reason ? `(${reason})` : "due to an unknown reason"}.`
 		spinner.fail(_updateFilesSendingSpinner())
 		process.exit(1)

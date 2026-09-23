@@ -179,6 +179,7 @@ export default async function () {
 	var hashesCheck = ""
 	const hashesCheckIssues = []
 	var hashedFilesCount = 0
+	var isCheckingHashes = false
 	var lastReceivedHashChunk = null
 	var lastHashChunk = null
 
@@ -242,7 +243,8 @@ export default async function () {
 					: path.join(path.basename(process.cwd()), relativeSaveDirectory)
 
 			newText += `\n  File${filesCount > 1 ? "s" : ""} saved to ${chalk.cyan(stripForDisplay(displayedSaveDirectory))}`
-			newText += `\n  Integrity of ${chalk.cyan(intlFormatter.format(hashedFilesCount))} file${hashedFilesCount > 1 ? "s" : ""} checked with SHA-256.`
+			if(isCheckingHashes) newText += `\n\n${chalk.cyan("◌")} Checking integrity of files...`
+			else if(hashedFilesCount) newText += `\n  Integrity of ${chalk.cyan(intlFormatter.format(hashedFilesCount))} file${hashedFilesCount > 1 ? "s" : ""} checked with SHA-256.`
 		} else {
 			var totalPercentage = totalSizeBytes > 0 ? Math.floor((receivedBytesFromRelay / totalSizeBytes) * 100) : 0
 			if (totalPercentage > 99.9) totalPercentage = 100
@@ -454,6 +456,7 @@ export default async function () {
 			hashesCheck = ""
 			hashesCheckIssues.length = 0
 			hashedFilesCount = 0
+			isCheckingHashes = false
 
 			lastSocketWarning = `Transfer was interrupted and needs to be restarted (${chalk.dim(stripForDisplay(message?.data?.message || "unknown reason"))}).`
 			_updateFilesDownloadingSpinner()
@@ -724,7 +727,11 @@ export default async function () {
 
 	// Function to start the integrity check of the received files (all hashes chunks received)
 	async function startHashCheck() {
+		isCheckingHashes = true
 		logDebugPerformance("Starting integrity check of received files... Parsing JSON...")
+		_updateFilesDownloadingSpinner()
+		await new Promise(resolve => setTimeout(resolve, 100)) // wait a bit to make sure the spinner is updated before hashing files (may freeze entire process)
+
 		if(!hashesCheck) return displayFatalError("Integrity check failed: no hashes received from the sender.", spinner)
 		var hashesCheckParsed = {}
 
@@ -738,55 +745,72 @@ export default async function () {
 			return displayFatalError("Integrity check failed: parsed hashes is not a valid object, or is an empty object.", spinner)
 		}
 
+		// Check if we saved zero file (ignored all)
+		if ((currentFilePosition || 1) - ignoredFilesPath.length <= 0) {
+			logDebugPerformance("No files were saved, so we skip the integrity check (erasing the list of parsed hashes).")
+			hashesCheckParsed = {}
+		}
+
 		// Compare the hashes of the received files with the hashes received from the sender
 		logDebugPerformance("Parsed JSON. Comparing hashes of received files with the hashes received from the sender...")
-		for (const hashObject of Object.entries(hashesCheckParsed)) {
-			const unsanitizedVirtualPath = hashObject[0]
-			if(unsanitizedVirtualPath == null || !unsanitizedVirtualPath?.length) {
-				logDebugPerformance("Skipping an invalid hash entry with no virtual path.")
-				continue
-			}
-			var virtualPath = sanitizePath(saveDirectory, unsanitizedVirtualPath)
+		const startHashingDate = Date.now()
 
-			const receivedHash = hashObject[1]
-			if(receivedHash == null || !receivedHash?.length) {
-				logDebugPerformance(`Skipping an invalid hash entry for "${virtualPath}" with no hash value.`)
-				continue
-			}
+		const hashEntries = Object.entries(hashesCheckParsed)
+		let nextEntryIndex = 0
 
-			logDebugPerformance(`Received hash of "${virtualPath}" --> "${receivedHash}". Starting comparison...`)
-
-			// Compare the hash of the received file with the hash received from the sender
-			try {
-				if(ignoredFilesPath.includes(unsanitizedVirtualPath)) {
-					logDebugPerformance(`Skipping integrity check for "${virtualPath}" because it is in the ignored files list.`)
+		const hashCheckRunner = async () => {
+			while (nextEntryIndex < hashEntries.length) {
+				const [unsanitizedVirtualPath, receivedHash] = hashEntries[nextEntryIndex++]
+				if(unsanitizedVirtualPath == null || !unsanitizedVirtualPath?.length) {
+					logDebugPerformance("Skipping an invalid hash entry with no virtual path.")
 					continue
 				}
-				if(needRenamingFilesPath.includes(unsanitizedVirtualPath)) {
-					logDebugPerformance(`Changing virtual path for integrity check of "${virtualPath}" because it is in the renamed files list.`)
-					virtualPath = renamedFilesPath[unsanitizedVirtualPath] || virtualPath
-				}
+				let virtualPath = sanitizePath(saveDirectory, unsanitizedVirtualPath)
 
-				const fileExists = await exists(virtualPath)
-				if(!fileExists) {
-					logDebugPerformance(`Integrity check failed for "${virtualPath}": file does not exist locally (maybe ignored).`)
+				if(receivedHash == null || !receivedHash?.length) {
+					logDebugPerformance(`Skipping an invalid hash entry for "${virtualPath}" with no hash value.`)
 					continue
 				}
 
-				const fileHash = await hashFileStreaming(virtualPath)
-				if(fileHash !== receivedHash) {
-					logDebugPerformance(`Integrity check failed for "${virtualPath}": expected hash "${receivedHash}", but got "${fileHash}".`)
-					hashesCheckIssues.push(`"${virtualPath}": expected hash "${receivedHash}", but got "${fileHash}".`)
-					_updateFilesDownloadingSpinner()
-				} else {
-					logDebugPerformance(`Integrity check passed for "${virtualPath}".`)
+				logDebugPerformance(`Received hash of "${virtualPath}" --> "${receivedHash}". Starting comparison...`)
+
+				// Compare the hash of the received file with the hash received from the sender
+				try {
+					if(ignoredFilesPath.includes(unsanitizedVirtualPath)) {
+						logDebugPerformance(`Skipping integrity check for "${virtualPath}" because it is in the ignored files list.`)
+						continue
+					}
+					if(needRenamingFilesPath.includes(unsanitizedVirtualPath)) {
+						logDebugPerformance(`Changing virtual path for integrity check of "${virtualPath}" because it is in the renamed files list.`)
+						virtualPath = renamedFilesPath[unsanitizedVirtualPath] || virtualPath
+					}
+
+					const fileExists = await exists(virtualPath)
+					if(!fileExists) {
+						logDebugPerformance(`Integrity check failed for "${virtualPath}": file does not exist locally (maybe ignored).`)
+						continue
+					}
+
+					const fileHash = await hashFileStreaming(virtualPath)
+					if(fileHash !== receivedHash) {
+						logDebugPerformance(`Integrity check failed for "${virtualPath}": expected hash "${receivedHash}", but got "${fileHash}".`)
+						hashesCheckIssues.push(`"${virtualPath}": expected hash "${receivedHash}", but got "${fileHash}".`)
+						_updateFilesDownloadingSpinner()
+					} else {
+						logDebugPerformance(`Integrity check passed for "${virtualPath}".`)
+					}
+					hashedFilesCount++
+				} catch (error) {
+					logDebugPerformance(`Error while checking integrity of "${virtualPath}": ${error?.message || error?.stack}`)
+					displayFatalError(`Integrity check failed for "${virtualPath}": ${error?.message || error?.stack}`, spinner)
 				}
-				hashedFilesCount++
-			} catch (error) {
-				logDebugPerformance(`Error while checking integrity of "${virtualPath}": ${error?.message || error?.stack}`)
-				displayFatalError(`Integrity check failed for "${virtualPath}": ${error?.message || error?.stack}`, spinner)
 			}
 		}
+		await Promise.all(Array.from({ length: Math.min(12, hashEntries.length) }, hashCheckRunner)) // up to 12 hashing in parallel
+		logDebugPerformance(`Took ${Date.now() - startHashingDate}ms to check integrity of ${hashEntries.length} file${hashEntries.length > 1 ? "s" : ""}.`)
+
+		endedDownloadTime = Date.now()
+		isCheckingHashes = false
 		_updateFilesDownloadingSpinner()
 
 		// Tell the sender we finished the integrity check
