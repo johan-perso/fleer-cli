@@ -179,6 +179,7 @@ export default async function () {
 	var hashesCheck = ""
 	const hashesCheckIssues = []
 	var hashedFilesCount = 0
+	var waitingHashesCheck = false
 	var isCheckingHashes = false
 	var lastReceivedHashChunk = null
 	var lastHashChunk = null
@@ -243,7 +244,8 @@ export default async function () {
 					: path.join(path.basename(process.cwd()), relativeSaveDirectory)
 
 			newText += `\n  File${filesCount > 1 ? "s" : ""} saved to ${chalk.cyan(stripForDisplay(displayedSaveDirectory))}`
-			if(isCheckingHashes) newText += `\n\n${chalk.cyan("◌")} Checking integrity of files...`
+			if(waitingHashesCheck) newText += `\n\n${chalk.cyan("◌")} Waiting for integrity check...`
+			else if(isCheckingHashes) newText += `\n\n${chalk.cyan("◌")} Checking integrity of files...`
 			else if(hashedFilesCount) newText += `\n  Integrity of ${chalk.cyan(intlFormatter.format(hashedFilesCount))} file${hashedFilesCount > 1 ? "s" : ""} checked with SHA-256.`
 		} else {
 			var totalPercentage = totalSizeBytes > 0 ? Math.floor((receivedBytesFromRelay / totalSizeBytes) * 100) : 0
@@ -456,6 +458,7 @@ export default async function () {
 			hashesCheck = ""
 			hashesCheckIssues.length = 0
 			hashedFilesCount = 0
+			waitingHashesCheck = false
 			isCheckingHashes = false
 
 			lastSocketWarning = `Transfer was interrupted and needs to be restarted (${chalk.dim(stripForDisplay(message?.data?.message || "unknown reason"))}).`
@@ -704,6 +707,7 @@ export default async function () {
 
 		endedDownloadTime = Date.now()
 		isDownloadingProcessEnded = true
+		waitingHashesCheck = true
 		_updateFilesDownloadingSpinner() // doesn't succeed right now, we are still waiting for an ack from sender
 
 		socket.send(JSON.stringify({
@@ -728,6 +732,7 @@ export default async function () {
 	// Function to start the integrity check of the received files (all hashes chunks received)
 	async function startHashCheck() {
 		isCheckingHashes = true
+		waitingHashesCheck = false
 		logDebugPerformance("Starting integrity check of received files... Parsing JSON...")
 		_updateFilesDownloadingSpinner()
 		await new Promise(resolve => setTimeout(resolve, 100)) // wait a bit to make sure the spinner is updated before hashing files (may freeze entire process)
