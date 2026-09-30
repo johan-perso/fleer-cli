@@ -159,7 +159,10 @@ ${breakLines(columns, prefix, `To access the data you send, the recipient must f
 
 ${chalk.bold.dim("3.")} ${chalk.bold("Sharing the keys")}
 ${breakLines(columns, prefix, `As explained above, the recipient needs to know two keys, as well as the relay URL. To make the transfer easier, the ${chalk.cyan("fleer send")} command automatically generates a link containing all the necessary information, ready to be sent to anyone.\n\nhttps://${chalk.cyan("server.fleer.app")}/d/${chalk.cyan("3QNfY73YU")}#${chalk.cyan("1.SFZRQo59aOuwEIZc")}\n\u200B              ↑                ↑             ↑\n\u200B      Relay server URL     Share Key    Encryption Key`)}
-`)
+
+${chalk.bold.dim("4.")} ${chalk.bold("Accessing the files")}
+${breakLines(columns, prefix, `Any ${chalk.cyan("Fleer-compatible client")} (such as this CLI) can access the shared files once they have access to all the necessary information. The easiest way to do this is by ${chalk.cyan("opening the link")} provided by the sender in a ${chalk.cyan("web browser")}, which will redirect to a client.\n\nTip: Browsers keep everything located after the "${chalk.cyan("#")}" symbol on your device, so the encryption key is never sent to the relay or to a malicious person on your network.`)}
+`) // TODO: change 4. when a new official client is released
 
 	cliCleanup()
 }
