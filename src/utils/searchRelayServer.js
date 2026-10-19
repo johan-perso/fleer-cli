@@ -16,6 +16,80 @@ const DEFAULT_RELAY_LISTS = [
 	"https://johanstick.fr/fleer_relays.txt"
 ]
 
+const cacheDir = path.join(process.env.TEMP || process.env.TMP || process.env.TMPDIR || "/tmp", "fleer")
+const cacheFilePath = path.join(cacheDir, "db.json")
+
+async function readRelayListsFromCache(url) {
+	if(!await fs.access(cacheFilePath).then(() => true).catch(() => false)) return null
+
+	try {
+		const cacheContent = await fs.readFile(cacheFilePath, "utf-8")
+		const cacheData = JSON.parse(cacheContent)
+		const cacheEntry = cacheData?.[url]
+		if(!cacheEntry) return null
+		if((cacheEntry.expires || 0) < Date.now()) {
+			saveRelayListsToCache(url, null) // Clear the cache for this URL
+			return null
+		}
+		return cacheEntry?.content || null
+	} catch (error) {
+		displayWarning(`Failed to read or parse cache file at ${chalk.dim(cacheFilePath)}: ${error?.message}`)
+		await fs.unlink(cacheFilePath).catch(() => {})
+		return null
+	}
+}
+
+const writeRelayListsCacheQueue = []
+var writeRelayListsCacheTimeout = null
+async function saveRelayListsToCache(url, content) {
+	writeRelayListsCacheQueue.push({ url, content })
+
+	if(writeRelayListsCacheTimeout) clearTimeout(writeRelayListsCacheTimeout)
+	writeRelayListsCacheTimeout = setTimeout(async () => {
+		if(!await fs.access(cacheDir).then(() => true).catch(() => false)) {
+			try {
+				await fs.mkdir(cacheDir, { recursive: true })
+			} catch (error) {
+				displayWarning(`Failed to create cache directory at ${chalk.dim(cacheDir)}: ${error?.message}`)
+				return
+			}
+		}
+
+		if(!await fs.access(cacheFilePath).then(() => true).catch(() => false)) {
+			try {
+				await fs.writeFile(cacheFilePath, JSON.stringify({}), "utf-8")
+			} catch (error) {
+				displayWarning(`Failed to create cache file at ${chalk.dim(cacheFilePath)}: ${error?.message}`)
+				return
+			}
+		}
+
+		// Read and parse the existing cache file
+		let cacheData = {}
+		try {
+			const cacheContent = await fs.readFile(cacheFilePath, "utf-8")
+			cacheData = JSON.parse(cacheContent)
+		} catch (error) {
+			displayWarning(`Failed to read or parse cache file at ${chalk.dim(cacheFilePath)}: ${error?.message}`)
+			return
+		}
+
+		writeRelayListsCacheQueue.forEach(({ url, content }) => {
+			cacheData[url] = {
+				content,
+				expires: Date.now() + (24 * 60 * 60 * 1000) // Cache expires in 24 hours
+			}
+		})
+		writeRelayListsCacheQueue.length = 0 // Clear the queue
+
+		try {
+			await fs.writeFile(cacheFilePath, JSON.stringify(cacheData, null, 2), "utf-8")
+		} catch (error) {
+			displayWarning(`Failed to write to cache file at ${chalk.dim(cacheFilePath)}: ${error?.message}`)
+		}
+	}, 1000) // Delay the write operation by 1 second to avoid multiple writes in quick succession
+}
+
 function colorizedURL(url, shouldReduceString = false) {
 	var output = ""
 	if(url.protocol === "file:") {
@@ -48,7 +122,7 @@ export default async function () {
 			if(!trimmedLine || !trimmedLine.length) return
 			if(trimmedLine.startsWith("#")) return
 			if(!trimmedLine.startsWith("http://") && !trimmedLine.startsWith("https://") && !isFile) {
-				warns.push(`Ignoring line ${index + 1} in ${personnalRelayListsPath}: not a valid URL/file path (must start with http://, https:// or file://)`)
+				warns.push(`Ignoring line ${index + 1} in ${chalk.dim(personnalRelayListsPath)}: not a valid URL/file path (must start with http://, https:// or file://)`)
 				return
 			}
 
@@ -103,7 +177,7 @@ export default async function () {
 			if(!trimmedLine || !trimmedLine.length) return
 			if(trimmedLine.startsWith("#")) return
 			if(!trimmedLine.startsWith("http://") && !trimmedLine.startsWith("https://") && !isFile) {
-				warns.push(`Ignoring line ${index + 1} in ${list.uri}: not a valid URL (must start with http:// or https://)`)
+				warns.push(`Ignoring line ${index + 1} in ${list.uri}: not a valid URL (must start with http:// or https://): ${trimmedLine}`)
 				return
 			}
 
@@ -117,27 +191,35 @@ export default async function () {
 	async function checkRelayList(list) {
 		lists.find(l => l.uri === list.uri).checked = false
 		if(list.type === "url") {
-			const urlResponse = await fetchWithTimeout(list.uri, {}, 5000).catch((error) => {
-				failRelayList(list.uri, `Failed to fetch relay list from ${chalk.dim(list.uri)}: ${error?.message}`)
-			})
-			if(!urlResponse) return
+			var urlContent
+			var cachedUrlContent = await readRelayListsFromCache(list.uri)
+			if(cachedUrlContent) {
+				urlContent = cachedUrlContent
+			} else {
+				const urlResponse = await fetchWithTimeout(list.uri, {}, 5000).catch((error) => {
+					failRelayList(list.uri, `Failed to fetch relay list from ${chalk.dim(list.uri)}: ${error?.message}`)
+				})
+				if(!urlResponse) return
 
-			if(!urlResponse.ok) {
-				failRelayList(list.uri, `Failed to fetch relay list from ${chalk.dim(list.uri)}: ${urlResponse?.status} ${urlResponse?.statusText}`)
-				return
+				if(!urlResponse.ok) {
+					failRelayList(list.uri, `Failed to fetch relay list from ${chalk.dim(list.uri)}: ${urlResponse?.status} ${urlResponse?.statusText}`)
+					return
+				}
+
+				if(urlResponse.headers.get("content-type") && !urlResponse.headers.get("content-type").includes("text/plain")) {
+					failRelayList(list.uri, `Relay list from ${chalk.dim(list.uri)} is not a text file ${chalk.dim(`(content-type: ${urlResponse.headers.get("content-type")})`)}`)
+					return
+				}
+
+				if(urlResponse.headers.get("content-length") > 1024 * 1024) {
+					failRelayList(list.uri, `Relay list from ${chalk.dim(list.uri)} is too big ${chalk.dim(`(${urlResponse.headers.get("content-length")} bytes)`)}`)
+					return
+				}
+
+				urlContent = await urlResponse.text()
+				saveRelayListsToCache(list.uri, urlContent)
 			}
 
-			if(urlResponse.headers.get("content-type") && !urlResponse.headers.get("content-type").includes("text/plain")) {
-				failRelayList(list.uri, `Relay list from ${chalk.dim(list.uri)} is not a text file ${chalk.dim(`(content-type: ${urlResponse.headers.get("content-type")})`)}`)
-				return
-			}
-
-			if(urlResponse.headers.get("content-length") > 1024 * 1024) {
-				failRelayList(list.uri, `Relay list from ${chalk.dim(list.uri)} is too big ${chalk.dim(`(${urlResponse.headers.get("content-length")} bytes)`)}`)
-				return
-			}
-
-			const urlContent = await urlResponse.text()
 			if(urlContent) parseRelayList(list, urlContent)
 		} else if(list.type === "file") {
 			const filePath = list.uri?.slice(7) // remove "file://"
@@ -193,7 +275,9 @@ export default async function () {
 				spinner.succeed(breakLines(process.stdout.columns - 2, "  ", `${chalk.cyan(colorizedURL(new URL(fastestServer.uri)))} is the fastest relay server ${chalk.dim(`(${fastestServer.timeElapsed} ms)`)}.`, { skipPrefixFirstLine: true }))
 				return fastestServer.uri
 			} else {
-				displayFatalError(`Finished checking relay servers, but didn't find any working one.\nYou can setup custom lists in ${chalk.cyan(personnalRelayListsPath)}.`, spinner)
+				spinner.stop()
+				if(warns.length) displayWarning(`Some warnings occurred while searching for relay servers:\n  ${breakLines(process.stdout.columns - 2, "  ", `• ${warns.join("\n• ")}`, { skipPrefixFirstLine: true })}`, spinner)
+				displayFatalError(`Checked all potential relay servers, but didn't find any working one.\nYou can setup custom lists in ${chalk.cyan(personnalRelayListsPath)}.`, spinner)
 			}
 		} else {
 			return await checkNextServers()

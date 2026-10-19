@@ -235,7 +235,7 @@ export default async function () {
 	// Get infos about the relay server
 	logDebugPerformance("---------------")
 	spinner.start("Creating the transfer...")
-	const relayServerInfosJson = await checkRelayAccess({
+	await checkRelayAccess({
 		relayUrl: relayServerUrl,
 		spinner,
 		logDebugPerformance,
