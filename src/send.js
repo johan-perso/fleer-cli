@@ -24,8 +24,8 @@ import copyToClipboard from "./utils/copyToClipboard.js"
 import removeLinesFromConsole from "./utils/removeLinesFromConsole.js"
 import breakLines from "./utils/breakLines.js"
 import hashFileStreaming from "./utils/hashFileStreaming.js"
+import searchRelayServer from "./utils/searchRelayServer.js"
 
-var relayServerUrl = "http://127.0.0.1:8080/"
 var CHUNK_SIZE = 2 * 1024 * 1024 // 2 MiB
 const maxErrorsCount = 20
 
@@ -72,6 +72,10 @@ export default async function () {
 			console.log(`${chalk.yellow("⚠")} ${message}`)
 		}
 	}
+
+	// Search for the best relay server to use
+	const relayServerUrl = await searchRelayServer()
+	console.log() // line break
 
 	const structure = []
 	let totalSizeBytes = 0
@@ -231,12 +235,12 @@ export default async function () {
 	// Get infos about the relay server
 	logDebugPerformance("---------------")
 	spinner.start("Creating the transfer...")
-	while(relayServerUrl.endsWith("/")) relayServerUrl = relayServerUrl.slice(0, -1)
 	const relayServerInfosJson = await checkRelayAccess({
 		relayUrl: relayServerUrl,
 		spinner,
 		logDebugPerformance,
-		chunkSize: CHUNK_SIZE
+		chunkSize: CHUNK_SIZE,
+		callbackOnError: displayFatalError
 	})
 
 	const estimatedChunksCount = Math.ceil(totalSizeBytes / CHUNK_SIZE)

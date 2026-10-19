@@ -94,6 +94,7 @@ export default async function () {
 		relayUrl: relayUrl,
 		spinner,
 		logDebugPerformance,
+		callbackOnError: displayFatalError
 	})
 
 	// Get transfer details from the relay server
