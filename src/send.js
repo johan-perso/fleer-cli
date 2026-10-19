@@ -498,7 +498,7 @@ export default async function () {
 		isRelayTooBusy = false // reset the relay too busy state, if it was set before
 
 		function retry() {
-			return sendChunk(payload, currentFileChunkIndex, fileIndex, sendingProcessId, chunksQuantity, logPrefix)
+			return sendChunk({ payload, currentFileChunkIndex, fileIndex, sendingProcessId, chunksQuantity, logPrefix })
 		}
 
 		if(responseJson?.error == "wait_before_uploading") { // 2nd check for allowed bytes by relay

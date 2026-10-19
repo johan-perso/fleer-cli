@@ -488,6 +488,13 @@ export default async function () {
 		}
 
 		const index = view.getUint32(1, false) // 2nd to 5th bytes indicate the chunk index (big-endian)
+
+		// If we received a chunk that is not the next one in the sequence
+		if (index !== lastReceivedChunkIndex + 1) {
+			isProcessingChunk = false
+			return displayFatalError(`Received chunk ${chalk.cyan(`#${index}`)} but expected ${chalk.cyan(`#${lastReceivedChunkIndex + 1}`)}.\nThis is likely due to a problem with the sender client that didn't sent us the chunks in the correct order, or the relay server that didn't forwarded the correct information.\nPlease contact the sender or the relay server administrator for further assistance.`, spinner)
+		}
+
 		lastReceivedChunkIndex = index
 		if(index > 1) _calculateMbps()
 		const payload = new Uint8Array(event.data, 5) // The rest is the chunk payload
