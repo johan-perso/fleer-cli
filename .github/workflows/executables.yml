@@ -44,9 +44,6 @@ jobs:
             --target=bun-${{ matrix.target }} \
             --outfile dist/fleer-${{ matrix.target }}${{ matrix.ext }}
 
-      - name: Package
-        run: tar -czf "dist/fleer-${{ matrix.target }}.tar.gz" -C out .
-
       - uses: actions/upload-artifact@v4
         with:
           name: fleer-${{ matrix.target }}
