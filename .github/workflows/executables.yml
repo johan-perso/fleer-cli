@@ -1,0 +1,79 @@
+name: Build CLI executables
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+          - target: linux-arm64
+          - target: linux-x64-musl # Alpine
+          - target: linux-arm64-musl
+          - target: darwin-x64
+          - target: darwin-arm64
+          - target: windows-x64
+            ext: .exe
+          - target: windows-arm64
+            ext: .exe
+
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - run: bun install --frozen-lockfile
+
+      - name: Compile
+        run: |
+          mkdir -p dist
+          bun build ./index.js --compile --minify \
+            --target=bun-${{ matrix.target }} \
+            --outfile dist/fleer-${{ matrix.target }}${{ matrix.ext }}
+
+      - name: Package
+        run: tar -czf "dist/fleer-${{ matrix.target }}.tar.gz" -C out .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fleer-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 1
+
+  release:
+    # Only publish a release when triggered by a version tag
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    needs: [build]
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: fleer-*
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum * > SHA256SUMS
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
