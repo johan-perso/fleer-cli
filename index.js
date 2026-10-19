@@ -28,7 +28,7 @@ process.stdin.on("data", (data) => {
 	const key = data.toString("utf-8")
 	if (key === "\u0003" || data.toString() === "\x03") { // ctrl+c
 		cliCleanup(true)
-	} else {
+	} else if (!key.startsWith("\x1b")) {
 		process.stdout.write(key)
 	}
 })
