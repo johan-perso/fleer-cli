@@ -49,6 +49,17 @@ echo "Fleer CLI installed to $dir\fleer.exe. Please restart your terminal or log
 
 Or, download [`fleer-windows-x64.exe`](https://github.com/johan-perso/fleer-cli/releases/latest/download/fleer-windows-x64.exe) for x64 architecture / [`fleer-windows-arm64.exe`](https://github.com/johan-perso/fleer-cli/releases/latest/download/fleer-windows-arm64.exe) for ARM64 architecture, and add the folder to your PATH.
 
+### Android (via Termux)
+
+```bash
+pkg install curl
+pkg install glibc-repo glibc-runner
+curl -fsSL https://github.com/johan-perso/fleer-cli/releases/latest/download/fleer-linux-arm64 -o $PREFIX/bin/fleer-bin
+chmod +x $PREFIX/bin/fleer-bin
+printf '#!/data/data/com.termux/files/usr/bin/sh\nexec grun "$PREFIX/bin/fleer-bin" "$@"\n' > $PREFIX/bin/fleer
+chmod +x $PREFIX/bin/fleer
+```
+
 ## Development
 
 **Requirements:**
