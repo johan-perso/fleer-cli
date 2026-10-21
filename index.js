@@ -52,10 +52,13 @@ async function cliCleanup(isUserInitiated = false) {
 }
 
 function showHelp(){
-	// TODO: gradient-string with the colors of the logo?
+	var columns = process.stdout.columns || 80
+	if (columns > 94) columns = 94
+	columns -= 4
+
 	console.log(`
  ${chalk.cyan(`Fleer CLI v${packageJson.version}`)}
- Developed by Johan
+ Developed by Johan ${chalk.italic("(johanstick.fr)")}
 
  Usage
    $ fleer
@@ -64,6 +67,7 @@ function showHelp(){
    send                  Start sending one or multiple files
    receive               Start receiving one or multiple files
    relay                 Display information about a specified relay server
+   help-download         Display details about how Fleer (itself, not the CLI) works
 
  Options
    --version -v          Show installed version
@@ -75,15 +79,20 @@ function showHelp(){
    $ fleer send <file_path>
 
  How to download a file?
-   $ fleer receive <download_keys>
+   $ fleer receive <share_link>
 
  FAQ:
-   Q: Example?
-   A: Example.
+   Q: Does relay server know what I send?
+   ${breakLines(columns, "      ", `A: ${chalk.cyan("No")}, all files are encrypted on your device before being sent to the relay server, and can only be decrypted by those with whom you have shared access.`, { skipPrefixFirstLine: true })}
 
-   Q: Looong example?
-   A: Long
-      example.
+   Q: Can relay server alter my files?
+   ${breakLines(columns, "      ", `A: Yes, ${chalk.cyan("but no")}. A malicious relay server ${chalk.cyan("could")} alter the files, but the recipient would not be able to successfully decrypt them, and the transfer would fail. In some advanced cases, the transfer could succeed, but a checksum verification is performed at the end on the recipient's side to ensure that the files are intact and unaltered.`, { skipPrefixFirstLine: true })}
+
+   Q: QR codes displayed in my terminal are not readable, what should I do?
+   ${breakLines(columns, "      ", `A: The ${chalk.cyan("fleer qr")} command generates and display a QR code image in your terminal, but only a few terminals (such as Ghostty) can actually display them properly. You can use a different terminal, or ${chalk.cyan("open the image file with your favorite image viewer")}.`, { skipPrefixFirstLine: true })}
+
+   Q: How can I start a download without typing the share link?
+   ${breakLines(columns, "      ", `A: If you have a share link in your clipboard, you can simply run ${chalk.cyan("fleer receive")} (or ${chalk.cyan("fdd")}) without any parameters, and the CLI will automatically start the download.`, { skipPrefixFirstLine: true })}
 `)
 	process.exit()
 }
@@ -118,6 +127,7 @@ else if(defaultArgs.includes("send") || defaultArgs.includes("s") || defaultArgs
 else if(defaultArgs.includes("receive") || defaultArgs.includes("r") || defaultArgs.includes("download") || defaultArgs.includes("d")) checkUpdate() && receiveFiles()
 else if(defaultArgs.includes("relay")) checkUpdate() && displayRelayDetails()
 else if(defaultArgs.includes("qr")) displayQrCode()
+else if(!defaultArgs.length) showHelp()
 else {
 	displayFatalError(`Unknown command.\nUse ${chalk.cyan("fleer --help")} to see the list of available commands.`)
 	process.exit(1)
